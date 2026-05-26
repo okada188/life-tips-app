@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Life Tips - 生活の知恵</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="background-blobs">
+        <div class="blob blob-1"></div>
+        <div class="blob blob-2"></div>
+    </div>
+    
+    <div class="app-container">
+        <header class="glass-panel header-container">
+            <h1>✨ Life Tips</h1>
+            <nav class="header-nav">
+                <button id="nav-home-btn" class="nav-btn active">ホーム</button>
+                <button id="nav-mypage-btn" class="nav-btn">マイページ</button>
+            </nav>
+        </header>
+
+        <!-- Home View -->
+        <main id="home-view">
+            <!-- Post Form Section -->
+            <section class="post-form-section glass-panel">
+                <!-- Trigger Row -->
+                <div id="post-trigger-container" class="post-trigger-row">
+                    <input type="text" placeholder="知恵をシェアする..." readonly id="post-trigger-input" />
+                    <button id="open-post-form-btn" class="primary-btn">投稿する</button>
+                </div>
+                
+                <!-- Actual Form (Hidden by default) -->
+                <form id="post-form" class="hidden">
+                    <input type="text" id="post-title" placeholder="タイトル (例: 10分でできるシンク掃除)" required />
+                    <textarea id="post-content" placeholder="裏ワザの詳細を教えてください！" rows="4" required></textarea>
+                    <div class="form-footer">
+                        <select id="post-category" required>
+                            <option value="housework">家事</option>
+                            <option value="saving">節約術</option>
+                            <option value="points">ポイント運用</option>
+                        </select>
+                        <div class="form-actions">
+                            <button type="button" id="cancel-post-btn" class="secondary-btn">キャンセル</button>
+                            <button type="submit" class="primary-btn">シェアする</button>
+                        </div>
+                    </div>
+                </form>
+            </section>
+
+            <!-- Filter -->
+            <section class="filters glass-panel">
+                <button class="filter-btn active" data-category="all">すべて</button>
+                <button class="filter-btn" data-category="housework">家事</button>
+                <button class="filter-btn" data-category="saving">節約術</button>
+                <button class="filter-btn" data-category="points">ポイント運用</button>
+            </section>
+
+            <!-- Posts List -->
+            <section id="posts-container" class="posts-list">
+                <!-- Posts will be rendered here dynamically -->
+            </section>
+        </main>
+
+        <!-- My Page View -->
+        <main id="mypage-view" class="hidden">
+            <section class="glass-panel mypage-section">
+                <h2>👤 マイページ</h2>
+                <div class="user-auth-vertical">
+                    <label for="username-input">アカウント名</label>
+                    <input type="text" id="username-input" placeholder="あなたの名前を入力..." />
+                    <button id="save-username-btn" class="primary-btn">保存する</button>
+                    <p id="save-message" class="success-msg hidden">保存しました！</p>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
