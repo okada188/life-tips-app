@@ -1,154 +1,260 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Life Tips - 生活の知恵</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Life Tips - 生活の知恵</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div class="background-blobs">
-        <div class="blob blob-1"></div>
-        <div class="blob blob-2"></div>
-    </div>
-    
-    <div class="app-container">
-        <header class="glass-panel header-container">
-            <h1>✨ Life Tips</h1>
-            <div class="header-right">
-                <nav class="header-nav">
-                    <button id="nav-home-btn" class="nav-btn active">ホーム</button>
-                    <button id="nav-mypage-btn" class="nav-btn">マイページ</button>
-                </nav>
-                <div class="auth-container">
-                    <button id="google-login-btn" class="primary-btn login-btn">
-                        ログイン
-                    </button>
-                    <div id="user-profile" class="hidden">
-                        <span id="user-name-display"></span>
-                        <button id="logout-btn" class="secondary-btn small-btn">ログアウト</button>
-                    </div>
-                </div>
+
+<div class="background-blobs">
+  <div class="blob blob-1"></div>
+  <div class="blob blob-2"></div>
+</div>
+
+<!-- ===== ウェルカム画面 ===== -->
+<div id="welcome-overlay">
+  <div class="welcome-inner">
+    <div class="welcome-logo">✨</div>
+    <h1 class="welcome-title">Life Tips</h1>
+    <p class="welcome-sub">生活の知恵をシェアするコミュニティ</p>
+
+    <div class="welcome-scroll-area">
+      <div class="welcome-step">
+        <div class="welcome-step-icon">💡</div>
+        <div>
+          <h3>裏ワザを投稿しよう</h3>
+          <p>家事・節約・ポイント運用など、あなたが発見した生活の知恵を写真付きでシェア。</p>
+          <div class="welcome-demo-card">
+            <div class="demo-card-header">
+              <span class="demo-avatar">🧹</span>
+              <span class="demo-name">山田 花子</span>
+              <span class="demo-badge">★ 人気</span>
             </div>
-        </header>
-
-        <!-- Home View -->
-        <main id="home-view">
-            <!-- Post Form Section -->
-            <section class="post-form-section glass-panel">
-                <div id="post-trigger-container" class="post-trigger-row">
-                    <input type="text" placeholder="知恵をシェアする... (ログインが必要です)" readonly id="post-trigger-input" />
-                    <button id="open-post-form-btn" class="primary-btn">投稿する</button>
-                </div>
-                
-                <form id="post-form" class="hidden">
-                    <input type="text" id="post-title" placeholder="タイトル (必須: 例: 10分でできるシンク掃除)" required />
-                    <textarea id="post-content" placeholder="裏ワザの詳細を教えてください！(必須)" rows="4" required></textarea>
-                    
-                    <div style="margin-bottom: 1rem;">
-                        <label style="font-size: 0.9rem; color: var(--text-muted); font-weight: 600;">画像 (任意):</label><br>
-                        <input type="file" id="post-image" accept="image/*" class="file-input" />
-                    </div>
-                    
-                    <div class="form-footer">
-                        <div class="category-group">
-                            <select id="post-category" required>
-                                <!-- Categories dynamically loaded -->
-                            </select>
-                            <button type="button" id="add-category-btn" class="secondary-btn small-btn">+ 追加</button>
-                        </div>
-                        
-                        <div class="form-actions">
-                            <span id="draft-saved-msg" class="success-msg hidden" style="font-size:0.8rem; margin-top:10px;">下書き保存済み</span>
-                            <button type="button" id="save-draft-btn" class="secondary-btn">下書き保存</button>
-                            <button type="button" id="cancel-post-btn" class="secondary-btn">キャンセル</button>
-                            <button type="submit" class="primary-btn">シェアする</button>
-                        </div>
-                    </div>
-                </form>
-            </section>
-
-            <!-- Filter & Sort -->
-            <section class="filters-section glass-panel">
-                <div id="filters-container" class="filters">
-                    <!-- Filter buttons dynamically loaded -->
-                </div>
-                <div class="sort-container">
-                    <label for="sort-select">並び替え:</label>
-                    <select id="sort-select">
-                        <option value="latest">更新順 (新着)</option>
-                        <option value="likes">評価数が多い順</option>
-                    </select>
-                </div>
-            </section>
-
-            <!-- Posts List -->
-            <section id="posts-container" class="posts-list">
-                <!-- Posts will be rendered here dynamically -->
-            </section>
-        </main>
-
-        <!-- My Page View -->
-        <main id="mypage-view" class="hidden">
-            <section class="glass-panel mypage-section">
-                <h2>👤 マイページ</h2>
-                
-                <div class="mypage-user-header">
-                    <h3 class="mypage-username">
-                        表示名: <span id="mypage-name-text"></span> 
-                        <button id="edit-name-btn" class="icon-btn" title="名前を編集">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" style="vertical-align: middle;">
-                              <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                            </svg>
-                        </button>
-                    </h3>
-                </div>
-
-                <div id="mypage-stats" class="stats-container">
-                    <div class="stat-box">
-                        <h3>獲得した総いいね数</h3>
-                        <p id="total-likes" class="stat-number">0 ❤️</p>
-                    </div>
-                </div>
-                
-                <h3 class="mypost-title">自分の投稿履歴</h3>
-                <section id="my-posts-container" class="posts-list">
-                    <!-- My Posts rendered here -->
-                </section>
-            </section>
-        </main>
-    </div>
-
-    <!-- Toast Notification -->
-    <div id="toast-notification" class="toast hidden"></div>
-
-    <!-- Edit Post Modal -->
-    <div id="edit-modal" class="modal hidden">
-        <div class="modal-content glass-panel">
-            <h2>投稿を編集</h2>
-            <form id="edit-form">
-                <input type="hidden" id="edit-post-id" />
-                <input type="text" id="edit-post-title" required />
-                <textarea id="edit-post-content" rows="4" required></textarea>
-                
-                <div style="margin-bottom: 1rem;">
-                    <label style="font-size: 0.9rem; color: var(--text-muted); font-weight: 600;">画像を変更 (任意):</label><br>
-                    <input type="file" id="edit-post-image" accept="image/*" class="file-input" />
-                    <p style="font-size:0.8rem; color:var(--text-muted);">※新しい画像を選択しない場合は既存の画像が維持されます</p>
-                </div>
-
-                <div class="form-footer">
-                    <select id="edit-post-category" required></select>
-                    <div class="form-actions">
-                        <button type="button" id="cancel-edit-btn" class="secondary-btn">キャンセル</button>
-                        <button type="submit" class="primary-btn">更新する</button>
-                    </div>
-                </div>
-            </form>
+            <div class="demo-card-title">重曹＋クエン酸で排水口が一瞬でキレイに</div>
+            <div class="demo-card-body">重曹大さじ1を排水口に振り、クエン酸水をかけるだけ。シュワシュワで汚れが浮き上がります。</div>
+            <div class="demo-card-footer"><span>❤️ 12</span><span>🏷 家事</span></div>
+          </div>
         </div>
+      </div>
+
+      <div class="welcome-step">
+        <div class="welcome-step-icon">👍</div>
+        <div>
+          <h3>役に立ったらいいね</h3>
+          <p>使えると思ったTipsにいいねを押して盛り上げよう。3いいね以上で★人気バッジがつきます。</p>
+          <div class="welcome-likes-demo">
+            <button class="welcome-like-btn liked">❤️ 12</button>
+            <span class="welcome-like-tip">← タップするといいねできる</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="welcome-step">
+        <div class="welcome-step-icon">👤</div>
+        <div>
+          <h3>投稿者ページをチェック</h3>
+          <p>気になる投稿者のアイコンをタップすると、その人のすべての投稿・獲得いいね数が見られます。</p>
+          <div class="welcome-avatar-demo">
+            <div class="welcome-avatar-row">
+              <span class="demo-avatar-large clickable-demo">🙋</span>
+              <div class="welcome-avatar-arrow">← アイコンをタップ</div>
+            </div>
+            <div class="welcome-profile-preview">
+              <div class="preview-name">田中 一郎 さんのページ</div>
+              <div class="preview-stat">投稿 8件 ／ 獲得いいね ❤️ 34</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="welcome-step">
+        <div class="welcome-step-icon">🗂</div>
+        <div>
+          <h3>カテゴリで絞り込む</h3>
+          <p>家事・節約術・ポイント運用など、見たいジャンルでフィルタリングできます。</p>
+          <div class="welcome-filter-demo">
+            <span class="demo-filter active">すべて</span>
+            <span class="demo-filter">家事</span>
+            <span class="demo-filter">節約術</span>
+            <span class="demo-filter">ポイント運用</span>
+          </div>
+        </div>
+      </div>
     </div>
 
-    <script type="module" src="app.js"></script>
+    <button id="welcome-start-btn" class="welcome-start-btn">
+      はじめる →
+    </button>
+    <p class="welcome-hint">Googleアカウントでログインして投稿できます</p>
+  </div>
+</div>
+
+<!-- ===== メインアプリ ===== -->
+<div class="app-container hidden" id="app-container">
+
+  <header class="glass-panel header-container">
+    <h1 id="header-logo" style="cursor:pointer;">✨ Life Tips</h1>
+    <div class="header-right">
+      <nav class="header-nav">
+        <button id="nav-home-btn" class="nav-btn active">ホーム</button>
+        <button id="nav-mypage-btn" class="nav-btn">マイページ</button>
+      </nav>
+      <div class="auth-container">
+        <button id="google-login-btn" class="primary-btn login-btn">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 48 48" style="vertical-align:middle;margin-right:6px"><path fill="#EA4335" d="M24 9.5c3.5 0 6.5 1.2 8.9 3.2l6.6-6.6C35.4 2.5 30 0 24 0 14.6 0 6.6 5.4 2.8 13.3l7.7 6C12.3 13.1 17.7 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v8.5h12.7c-.6 3-2.3 5.5-4.9 7.2l7.6 5.9c4.5-4.1 7.1-10.2 7.1-17.1z"/><path fill="#FBBC05" d="M10.5 28.7A14.5 14.5 0 0 1 9.5 24c0-1.6.3-3.2.8-4.7l-7.7-6A23.9 23.9 0 0 0 0 24c0 3.9.9 7.5 2.6 10.7l7.9-6z"/><path fill="#34A853" d="M24 48c6 0 11.1-2 14.8-5.4l-7.6-5.9c-2 1.4-4.6 2.2-7.2 2.2-6.3 0-11.7-3.6-13.5-9.3l-7.9 6C6.6 42.6 14.6 48 24 48z"/></svg>
+          Googleでログイン
+        </button>
+        <div id="user-profile" class="hidden">
+          <span id="user-name-display"></span>
+          <button id="logout-btn" class="secondary-btn small-btn">ログアウト</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- ===== Home View ===== -->
+  <main id="home-view">
+
+    <section class="post-form-section glass-panel">
+      <div id="post-trigger-container" class="post-trigger-row">
+        <input type="text" placeholder="知恵をシェアする... (ログインが必要です)" readonly id="post-trigger-input" />
+      </div>
+      <form id="post-form" class="hidden">
+        <input type="text" id="post-title" placeholder="タイトル (必須: 例: 10分でできるシンク掃除)" required />
+        <textarea id="post-content" placeholder="裏ワザの詳細を教えてください！(必須)" rows="4" required></textarea>
+        <div style="margin-bottom: 1rem;">
+          <label style="font-size: 0.9rem; color: var(--text-muted); font-weight: 600;">画像 (任意):</label><br>
+          <input type="file" id="post-image" accept="image/*" class="file-input" />
+        </div>
+        <div class="form-footer">
+          <div class="category-group">
+            <select id="post-category" required></select>
+            <button type="button" id="add-category-btn" class="secondary-btn small-btn">+ 追加</button>
+          </div>
+          <div class="form-actions">
+            <span id="draft-saved-msg" class="success-msg hidden" style="font-size:0.8rem; margin-top:10px;">下書き保存済み</span>
+            <button type="button" id="save-draft-btn" class="secondary-btn">下書き保存</button>
+            <button type="button" id="cancel-post-btn" class="secondary-btn">キャンセル</button>
+            <button type="submit" class="primary-btn">シェアする</button>
+          </div>
+        </div>
+      </form>
+    </section>
+
+    <section class="filters-section glass-panel">
+      <div id="filters-container" class="filters"></div>
+      <div class="sort-container">
+        <label for="sort-select">並び替え:</label>
+        <select id="sort-select">
+          <option value="latest">更新順 (新着)</option>
+          <option value="likes">評価数が多い順</option>
+        </select>
+      </div>
+    </section>
+
+    <section id="posts-container" class="posts-list"></section>
+  </main>
+
+  <!-- ===== My Page View ===== -->
+  <main id="mypage-view" class="hidden">
+    <section class="glass-panel mypage-section">
+      <h2>👤 マイページ</h2>
+      <div class="mypage-user-header">
+        <div class="mypage-avatar-row">
+          <div id="mypage-avatar-display" class="mypage-avatar" title="クリックしてアイコンを変更">🙂</div>
+          <div>
+            <h3 class="mypage-username">
+              表示名: <span id="mypage-name-text"></span>
+              <button id="edit-name-btn" class="icon-btn" title="名前を編集">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" style="vertical-align: middle;">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                </svg>
+              </button>
+            </h3>
+            <p class="mypage-avatar-hint">↑ アイコンをクリックして変更</p>
+          </div>
+        </div>
+      </div>
+      <div id="mypage-stats" class="stats-container">
+        <div class="stat-box">
+          <h3>獲得した総いいね数</h3>
+          <p id="total-likes" class="stat-number">0 ❤️</p>
+        </div>
+      </div>
+      <h3 class="mypost-title">自分の投稿履歴</h3>
+      <section id="my-posts-container" class="posts-list"></section>
+    </section>
+  </main>
+
+  <!-- ===== User Profile View (他者のページ) ===== -->
+  <main id="user-profile-view" class="hidden">
+    <section class="glass-panel mypage-section">
+      <button id="back-to-home-btn" class="secondary-btn back-btn">← ホームに戻る</button>
+      <div class="user-profile-header">
+        <div class="user-profile-avatar" id="profile-view-avatar">👤</div>
+        <div>
+          <h2 id="profile-view-name">—</h2>
+          <p class="profile-view-sub">の投稿一覧</p>
+        </div>
+      </div>
+      <div id="profile-view-stats" class="stats-container">
+        <div class="stat-box">
+          <h3>投稿数</h3>
+          <p id="profile-view-post-count" class="stat-number">0 📝</p>
+        </div>
+        <div class="stat-box">
+          <h3>獲得いいね数</h3>
+          <p id="profile-view-likes" class="stat-number">0 ❤️</p>
+        </div>
+      </div>
+      <h3 class="mypost-title">投稿履歴</h3>
+      <section id="user-posts-container" class="posts-list"></section>
+    </section>
+  </main>
+
+</div>
+
+<!-- Toast Notification -->
+<div id="toast-notification" class="toast hidden"></div>
+
+<!-- Avatar Picker Modal -->
+<div id="avatar-modal" class="modal hidden">
+  <div class="modal-content glass-panel">
+    <h2>アイコンを選択</h2>
+    <div id="avatar-grid" class="avatar-grid"></div>
+    <div style="text-align:right;margin-top:1rem;">
+      <button id="cancel-avatar-btn" class="secondary-btn">キャンセル</button>
+    </div>
+  </div>
+</div>
+
+<!-- Edit Post Modal -->
+<div id="edit-modal" class="modal hidden">
+  <div class="modal-content glass-panel">
+    <h2>投稿を編集</h2>
+    <form id="edit-form">
+      <input type="hidden" id="edit-post-id" />
+      <input type="text" id="edit-post-title" required />
+      <textarea id="edit-post-content" rows="4" required></textarea>
+      <div style="margin-bottom: 1rem;">
+        <label style="font-size: 0.9rem; color: var(--text-muted); font-weight: 600;">画像を変更 (任意):</label><br>
+        <input type="file" id="edit-post-image" accept="image/*" class="file-input" />
+        <p style="font-size:0.8rem; color:var(--text-muted);">※新しい画像を選択しない場合は既存の画像が維持されます</p>
+      </div>
+      <div class="form-footer">
+        <select id="edit-post-category" required></select>
+        <div class="form-actions">
+          <button type="button" id="cancel-edit-btn" class="secondary-btn">キャンセル</button>
+          <button type="submit" class="primary-btn">更新する</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script type="module" src="app.js"></script>
 </body>
 </html>
