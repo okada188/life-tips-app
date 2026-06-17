@@ -1,0 +1,15 @@
+# Firebase deploy cache
+.firebase/
+
+# Vercel
+.vercel/
+
+# Dependencies
+node_modules/
+
+# Local tooling
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db

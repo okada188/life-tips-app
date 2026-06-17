@@ -1,0 +1,44 @@
+rules_version = '2';
+
+// ============================================================
+//  Life Tips – Firestore セキュリティルール
+//  ・読み取りは誰でも可（公開コミュニティ）
+//  ・書き込みはログイン済みユーザーのみ
+//  ・投稿/コメントの削除は作成者本人のみ
+// ============================================================
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 投稿
+    match /posts/{postId} {
+      allow read: if true;
+      allow create: if request.auth != null
+                    && request.resource.data.authorId == request.auth.uid;
+      // いいね・コメント数の更新は任意のログインユーザーが可能
+      allow update: if request.auth != null;
+      allow delete: if request.auth != null
+                    && resource.data.authorId == request.auth.uid;
+
+      // コメント（サブコレクション）
+      match /comments/{commentId} {
+        allow read: if true;
+        allow create: if request.auth != null
+                      && request.resource.data.authorId == request.auth.uid;
+        allow delete: if request.auth != null
+                      && resource.data.authorId == request.auth.uid;
+      }
+    }
+
+    // ユーザープロフィール（表示名・アバター・ブックマーク）
+    match /users/{userId} {
+      allow read: if true;
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // カテゴリ設定（共有）
+    match /settings/{docId} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+  }
+}
