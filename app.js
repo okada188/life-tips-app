@@ -7,10 +7,10 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import {
   getAuth,
-  GoogleAuthProvider,
-  signInWithPopup,
-  signInWithRedirect,
-  getRedirectResult,
+  EmailAuthProvider,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  linkWithCredential,
   signInAnonymously,
   updateProfile,
   signOut,
@@ -111,15 +111,38 @@ const CAT_COLORS = [
   { bg: "rgba(233,30,99,0.15)",   text: "#ad1457",  border: "rgba(233,30,99,0.4)"   }, // ピンク
 ];
 
-function getCatColor(categoryId) {
+function getCatColorIndex(categoryId) {
+  // 追加時に割り当てた色番号があればそれを使う（色かぶり防止）
+  const cat = categories.find(c => c.id === categoryId);
+  if (cat && Number.isInteger(cat.color)) return cat.color % CAT_COLORS.length;
   // デフォルトカテゴリは固定色
-  if (categoryId === "housework") return CAT_COLORS[1]; // 緑
-  if (categoryId === "saving")    return CAT_COLORS[2]; // オレンジ
-  if (categoryId === "points")    return CAT_COLORS[0]; // 青
-  // カスタムカテゴリはID文字列をハッシュして色を決定
+  if (categoryId === "housework") return 1; // 緑
+  if (categoryId === "saving")    return 2; // オレンジ
+  if (categoryId === "points")    return 0; // 青
+  // 色未割り当ての旧データ用フォールバック（ID文字列をハッシュ）
   let hash = 0;
   for (let i = 0; i < categoryId.length; i++) hash = categoryId.charCodeAt(i) + ((hash << 5) - hash);
-  return CAT_COLORS[Math.abs(hash) % CAT_COLORS.length];
+  return Math.abs(hash) % CAT_COLORS.length;
+}
+
+function getCatColor(categoryId) {
+  return CAT_COLORS[getCatColorIndex(categoryId)];
+}
+
+// 既に使われている色番号の集合（新カテゴリに未使用色を割り当てるため）
+function usedColorIndices() {
+  const used = new Set();
+  categories.forEach(c => used.add(getCatColorIndex(c.id)));
+  return used;
+}
+
+// 未使用の色番号を1つ返す（全色使用済みなら循環）
+function pickUnusedColorIndex() {
+  const used = usedColorIndices();
+  for (let i = 0; i < CAT_COLORS.length; i++) {
+    if (!used.has(i)) return i;
+  }
+  return categories.length % CAT_COLORS.length;
 }
 
 // ── DOM 取得 ────────────────────────────────────────────────
@@ -127,10 +150,9 @@ const welcomeOverlay     = document.getElementById("welcome-overlay");
 const welcomeStartBtn    = document.getElementById("welcome-start-btn");
 const appContainer       = document.getElementById("app-container");
 
-const googleLoginBtn     = document.getElementById("google-login-btn");
+const authBtn            = document.getElementById("auth-btn");
 const logoutBtn          = document.getElementById("logout-btn");
 const userProfileEl      = document.getElementById("user-profile");
-const userNameDisplay    = document.getElementById("user-name-display");
 
 const navHomeBtn         = document.getElementById("nav-home-btn");
 const navMypageBtn       = document.getElementById("nav-mypage-btn");
@@ -199,49 +221,118 @@ function hideWelcome() {
 
 welcomeStartBtn.addEventListener("click", hideWelcome);
 
-// ── Auth ─────────────────────────────────────────────────────
-function buildGoogleProvider() {
-  const provider = new GoogleAuthProvider();
-  // 毎回アカウント選択を表示（複数アカウント対応 / セッション残りによる失敗を回避）
-  provider.setCustomParameters({ prompt: "select_account" });
-  return provider;
-}
+// ── Auth (メール + パスワード) ───────────────────────────────
+const authModal      = document.getElementById("auth-modal");
+const authForm       = document.getElementById("auth-form");
+const authEmail      = document.getElementById("auth-email");
+const authPassword   = document.getElementById("auth-password");
+const authError      = document.getElementById("auth-error");
+const authSubmitBtn  = document.getElementById("auth-submit-btn");
+const authTabLogin   = document.getElementById("auth-tab-login");
+const authTabRegister= document.getElementById("auth-tab-register");
+const authModalDesc  = document.getElementById("auth-modal-desc");
+const cancelAuthBtn  = document.getElementById("cancel-auth-btn");
+const togglePasswordBtn = document.getElementById("toggle-password-btn");
 
-// リダイレクト方式でログインした場合の結果を起動時に回収
-getRedirectResult(auth).catch((e) => {
-  if (e && e.code && e.code !== "auth/no-auth-event") {
-    showToast("ログインに失敗しました: " + e.message, "error");
-  }
+// パスワードの表示/非表示切替（デフォルトは伏せ字）
+togglePasswordBtn.addEventListener("click", () => {
+  const show = authPassword.type === "password";
+  authPassword.type = show ? "text" : "password";
+  togglePasswordBtn.textContent = show ? "🙈" : "👁";
+  togglePasswordBtn.setAttribute("aria-pressed", String(show));
+  togglePasswordBtn.setAttribute("aria-label", show ? "パスワードを隠す" : "パスワードを表示");
+  togglePasswordBtn.title = show ? "パスワードを隠す" : "パスワードを表示";
 });
 
-googleLoginBtn.addEventListener("click", async () => {
-  const provider = buildGoogleProvider();
+let authMode = "login"; // "login" | "register"
+
+function setAuthMode(mode) {
+  authMode = mode;
+  const isLogin = mode === "login";
+  authTabLogin.classList.toggle("active", isLogin);
+  authTabRegister.classList.toggle("active", !isLogin);
+  authSubmitBtn.textContent = isLogin ? "ログイン" : "登録する";
+  authPassword.autocomplete = isLogin ? "current-password" : "new-password";
+  authModalDesc.textContent = isLogin
+    ? "登録済みのメールアドレスとパスワードでログインします。"
+    : "メールアドレスとパスワードでアカウントを作成します。今のゲスト投稿はそのまま引き継がれます。";
+  authError.classList.add("hidden");
+}
+
+function openAuthModal(mode = "login") {
+  setAuthMode(mode);
+  authForm.reset();
+  // パスワードは毎回伏せ字の状態に戻す
+  authPassword.type = "password";
+  togglePasswordBtn.textContent = "👁";
+  togglePasswordBtn.setAttribute("aria-pressed", "false");
+  authError.classList.add("hidden");
+  authModal.classList.remove("hidden");
+  authEmail.focus();
+}
+function closeAuthModal() { authModal.classList.add("hidden"); }
+
+function showAuthError(msg) {
+  authError.textContent = msg;
+  authError.classList.remove("hidden");
+}
+
+// Firebase のエラーコードを日本語メッセージに変換
+function authErrorMessage(code) {
+  switch (code) {
+    case "auth/invalid-email":          return "メールアドレスの形式が正しくありません。";
+    case "auth/missing-password":
+    case "auth/weak-password":          return "パスワードは6文字以上で入力してください。";
+    case "auth/password-does-not-meet-requirements":
+                                        return "パスワードが要件を満たしていません。数字だけでなく英字も組み合わせてください。";
+    case "auth/email-already-in-use":   return "このメールアドレスは既に登録済みです。「ログイン」からお試しください。";
+    case "auth/invalid-credential":
+    case "auth/wrong-password":
+    case "auth/user-not-found":         return "メールアドレスまたはパスワードが正しくありません。";
+    case "auth/too-many-requests":      return "試行回数が多すぎます。しばらく待ってからお試しください。";
+    default:                            return "認証に失敗しました (" + code + ")";
+  }
+}
+
+authBtn.addEventListener("click", () => openAuthModal("login"));
+authTabLogin.addEventListener("click", () => setAuthMode("login"));
+authTabRegister.addEventListener("click", () => setAuthMode("register"));
+cancelAuthBtn.addEventListener("click", closeAuthModal);
+authModal.addEventListener("click", (e) => { if (e.target === authModal) closeAuthModal(); });
+
+authForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const email    = authEmail.value.trim();
+  const password = authPassword.value;
+  authError.classList.add("hidden");
+  authSubmitBtn.disabled = true;
+
   try {
-    // まずポップアップ方式を試す
-    await signInWithPopup(auth, provider);
-  } catch (e) {
-    // ポップアップがブロック/閉じられた・環境が非対応の場合はリダイレクト方式にフォールバック
-    const fallbackCodes = [
-      "auth/popup-blocked",
-      "auth/popup-closed-by-user",
-      "auth/cancelled-popup-request",
-      "auth/operation-not-supported-in-this-environment"
-    ];
-    if (fallbackCodes.includes(e.code)) {
-      try {
-        showToast("別画面でログインします…");
-        await signInWithRedirect(auth, provider);
-        return;
-      } catch (e2) {
-        showToast("ログインに失敗しました: " + e2.message, "error");
-        return;
+    if (authMode === "register") {
+      if (auth.currentUser && auth.currentUser.isAnonymous) {
+        // 匿名アカウントをメール+パスワードに「昇格」(uid維持で投稿が消えない)
+        const cred = EmailAuthProvider.credential(email, password);
+        await linkWithCredential(auth.currentUser, cred);
+        showToast("アカウントを作成しました。次回からログインできます ✅");
+      } else {
+        await createUserWithEmailAndPassword(auth, email, password);
+        showToast("アカウントを作成しました ✅");
       }
+    } else {
+      await signInWithEmailAndPassword(auth, email, password);
+      showToast("ログインしました ✅");
     }
-    if (e.code === "auth/unauthorized-domain") {
-      showToast("このドメインは許可されていません。Firebase の承認済みドメインを確認してください", "error");
-      return;
+    closeAuthModal();
+  } catch (err) {
+    // 新規登録で「既に使用中」の場合はログインに切り替えて案内
+    if (err.code === "auth/email-already-in-use" || err.code === "auth/credential-already-in-use") {
+      setAuthMode("login");
+      showAuthError("このメールアドレスは登録済みです。パスワードを入力してログインしてください。");
+    } else {
+      showAuthError(authErrorMessage(err.code));
     }
-    showToast("ログインに失敗しました: " + e.message, "error");
+  } finally {
+    authSubmitBtn.disabled = false;
   }
 });
 
@@ -263,9 +354,10 @@ onAuthStateChanged(auth, async (user) => {
   }
 
   currentUser = user;
-  googleLoginBtn.classList.add("hidden");
   userProfileEl.classList.remove("hidden");
-  postTriggerInput.placeholder = "知恵をシェアする...";
+  postTriggerInput.placeholder = user.isAnonymous
+    ? "ログインして知恵をシェアする…"
+    : "知恵をシェアする...";
 
   // 表示名（匿名ユーザーにはデフォルトのニックネームを付与）
   const defaultName = "ゲスト" + user.uid.slice(0, 4);
@@ -293,9 +385,18 @@ onAuthStateChanged(auth, async (user) => {
     try { await updateProfile(currentUser, { displayName: nickname }); } catch (_) {}
   }
 
-  // ヘッダーにニックネームを表示。匿名ユーザーはログアウト不要なのでボタンを隠す
-  userNameDisplay.textContent = nickname;
+  // ヘッダーはボタンのみ表示（ゲスト名は表示しない）
+  // 匿名ユーザー: 「新規登録/ログイン」を表示（ログアウトは不要なので隠す）
+  // 本登録ユーザー: ログアウトを表示（新規登録/ログインは隠す）
+  authBtn.classList.toggle("hidden", !user.isAnonymous);
   logoutBtn.classList.toggle("hidden", user.isAnonymous);
+
+  // マイページは本登録ユーザーのみ。匿名（ログアウト中）はナビを隠し、
+  // 既にマイページを開いていたらホームに戻す
+  navMypageBtn.classList.toggle("hidden", user.isAnonymous);
+  if (user.isAnonymous && !mypageView.classList.contains("hidden")) {
+    showView("home");
+  }
 
   // アバター絵文字をローカルに記憶
   const savedEmoji = uSnap.exists() ? (uSnap.data().avatarEmoji || "🙂") : "🙂";
@@ -322,7 +423,18 @@ onAuthStateChanged(auth, async (user) => {
 });
 
 // ── ナビゲーション ──────────────────────────────────────────
+// 本登録ユーザーかどうか（匿名/未ログインは不可）
+function isRegistered() {
+  return !!currentUser && !currentUser.isAnonymous;
+}
+
 function showView(view) {
+  // マイページは本登録ユーザー専用。ログアウト中（匿名）は開けない
+  if (view === "mypage" && !isRegistered()) {
+    showToast("マイページの利用にはログインが必要です");
+    view = "home";
+  }
+
   homeView.classList.add("hidden");
   mypageView.classList.add("hidden");
   userProfileView.classList.add("hidden");
@@ -342,10 +454,7 @@ function showView(view) {
 }
 
 navHomeBtn.addEventListener("click", () => showView("home"));
-navMypageBtn.addEventListener("click", () => {
-  if (!currentUser) { showToast("ログインが必要です"); return; }
-  showView("mypage");
-});
+navMypageBtn.addEventListener("click", () => showView("mypage"));
 headerLogo.addEventListener("click", () => showView("home"));
 backToHomeBtn.addEventListener("click", () => showView("home"));
 
@@ -375,11 +484,26 @@ function renderCategorySelects() {
 }
 
 function renderFilters() {
+  // 投稿が1件以上あるジャンルだけ表示（未投稿のジャンルはフィルターに出さない）
+  const usedCats = new Set(allPosts.map(p => p.category));
+  const visible  = categories.filter(c => usedCats.has(c.id));
+  // 選択中ジャンルの投稿が無くなったら「すべて」に戻す
+  if (activeCategory !== "all" && !usedCats.has(activeCategory)) {
+    activeCategory = "all";
+  }
+
+  // 各ジャンルボタンを、投稿カードのカテゴリタグと同じ色で表示する
   filtersContainer.innerHTML =
     `<button class="filter-btn ${activeCategory === "all" ? "active" : ""}" data-cat="all">すべて</button>` +
-    categories.map(c =>
-      `<button class="filter-btn ${activeCategory === c.id ? "active" : ""}" data-cat="${c.id}">${c.label}</button>`
-    ).join("");
+    visible.map(c => {
+      const col      = getCatColor(c.id);
+      const isActive = activeCategory === c.id;
+      // 選択中は塗りつぶし、未選択は投稿タグと同じ淡色
+      const style = isActive
+        ? `background:${col.text};color:#fff;border-color:${col.text};`
+        : `background:${col.bg};color:${col.text};border-color:${col.border};`;
+      return `<button class="filter-btn ${isActive ? "active" : ""}" data-cat="${c.id}" style="${style}">${escHtml(c.label)}</button>`;
+    }).join("");
 
   filtersContainer.querySelectorAll(".filter-btn").forEach(btn => {
     btn.addEventListener("click", () => {
@@ -391,11 +515,12 @@ function renderFilters() {
 }
 
 addCategoryBtn.addEventListener("click", async () => {
-  if (!currentUser) { showToast("ログインが必要です"); return; }
+  if (!isRegistered()) { showToast("ログインが必要です"); return; }
   const label = prompt("新しいカテゴリ名を入力してください:");
   if (!label) return;
   const id = label.toLowerCase().replace(/\s+/g, "_") + "_" + Date.now();
-  categories.push({ id, label });
+  // 既存ジャンルと色がかぶらないよう、未使用の色番号を割り当てる
+  categories.push({ id, label, color: pickUnusedColorIndex() });
   await setDoc(doc(db, "settings", "categories"), { list: categories });
   renderCategorySelects();
   renderFilters();
@@ -404,7 +529,12 @@ addCategoryBtn.addEventListener("click", async () => {
 
 // ── 投稿フォーム ─────────────────────────────────────────────
 function openPostForm() {
-  if (!currentUser) { showToast("Googleログインが必要です"); return; }
+  // 投稿は本登録ユーザーのみ。ゲスト（匿名）はログインを促す
+  if (!isRegistered()) {
+    showToast("投稿するにはログインが必要です");
+    openAuthModal("login");
+    return;
+  }
   postForm.classList.remove("hidden");
   postTitle.focus();
 }
@@ -449,7 +579,7 @@ async function compressImage(file) {
 
 postForm.addEventListener("submit", async (e) => {
   e.preventDefault();
-  if (!currentUser) { showToast("ログインが必要です"); return; }
+  if (!isRegistered()) { showToast("投稿するにはログインが必要です"); return; }
 
   const file = postImage.files[0];
   if (file && file.size > 3 * 1024 * 1024) {
@@ -511,6 +641,7 @@ function subscribePosts() {
   const q = query(collection(db, "posts"), orderBy("createdAt", "desc"));
   unsubscribePosts = onSnapshot(q, (snap) => {
     allPosts = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderFilters();   // 投稿の有無に応じてジャンルの表示を更新
     renderPosts();
     updateMypageView();
   });
@@ -583,7 +714,9 @@ function buildPostCard(post, isOwner) {
       ${isAuthor ? `
         <button class="edit-btn secondary-btn small-btn" data-id="${post.id}">編集</button>
         <button class="delete-btn secondary-btn small-btn danger" data-id="${post.id}">削除</button>
-      ` : ""}
+      ` : `
+        <button class="report-btn" data-id="${post.id}" data-title="${escHtml(post.title)}" data-author="${escHtml(post.authorId || "")}" title="この投稿を通報する">🚩 通報</button>
+      `}
     </div>
     <div class="comments-wrap ${openComments.has(post.id) ? "" : "hidden"}" data-comments-for="${post.id}">
       <div class="comments-list"><p class="comments-loading">読み込み中…</p></div>
@@ -652,6 +785,14 @@ function attachPostEvents(container, isMyPage) {
       } catch {
         showToast("保存に失敗しました", "error");
       }
+    });
+  });
+
+  // ── 通報 ──
+  container.querySelectorAll(".report-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      if (!currentUser) { showToast("ログインが必要です"); return; }
+      openReportModal(btn.dataset.id, btn.dataset.title, btn.dataset.author);
     });
   });
 
@@ -875,7 +1016,6 @@ editNameBtn.addEventListener("click", async () => {
   await updateDoc(doc(db, "users", currentUser.uid), { displayName: newName });
   // Auth の displayName も更新
   await updateProfile(currentUser, { displayName: newName });
-  userNameDisplay.textContent = newName;
   updateMypageView();
   showToast("表示名を更新しました ✅");
 });
@@ -908,6 +1048,65 @@ editForm.addEventListener("submit", async (e) => {
   });
   editModal.classList.add("hidden");
   showToast("投稿を更新しました ✅");
+});
+
+// ── 通報モーダル ─────────────────────────────────────────────
+const reportModal     = document.getElementById("report-modal");
+const reportForm      = document.getElementById("report-form");
+const reportPostId    = document.getElementById("report-post-id");
+const reportTargetEl  = document.getElementById("report-target");
+const reportReason    = document.getElementById("report-reason");
+const reportDetail    = document.getElementById("report-detail");
+const cancelReportBtn = document.getElementById("cancel-report-btn");
+
+let reportAuthorId = "";
+const REPORTED_KEY = "lifetips_reported_posts"; // 多重通報の簡易抑止（端末内）
+
+function getReportedPosts() {
+  try { return JSON.parse(localStorage.getItem(REPORTED_KEY) || "[]"); }
+  catch { return []; }
+}
+
+function openReportModal(postId, postTitle, authorId) {
+  if (getReportedPosts().includes(postId)) {
+    showToast("この投稿は既に通報済みです");
+    return;
+  }
+  reportPostId.value = postId;
+  reportAuthorId = authorId || "";
+  reportTargetEl.textContent = `対象: 「${postTitle || ""}」`;
+  reportForm.reset();
+  reportModal.classList.remove("hidden");
+}
+function closeReportModal() { reportModal.classList.add("hidden"); }
+
+cancelReportBtn.addEventListener("click", closeReportModal);
+reportModal.addEventListener("click", (e) => { if (e.target === reportModal) closeReportModal(); });
+
+reportForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!currentUser) { showToast("ログインが必要です"); return; }
+  const postId = reportPostId.value;
+  try {
+    await addDoc(collection(db, "reports"), {
+      postId,
+      postAuthorId: reportAuthorId || null,
+      reason:       reportReason.value,
+      detail:       reportDetail.value.trim(),
+      reportedBy:   currentUser.uid,
+      reportedByName: currentUser.displayName || currentUser.email || "名無しさん",
+      status:       "open",
+      createdAt:    serverTimestamp()
+    });
+    // 同じ投稿を繰り返し通報できないよう端末内に記録
+    const reported = getReportedPosts();
+    reported.push(postId);
+    localStorage.setItem(REPORTED_KEY, JSON.stringify(reported));
+    closeReportModal();
+    showToast("通報を受け付けました。ご協力ありがとうございます 🙏");
+  } catch {
+    showToast("通報の送信に失敗しました", "error");
+  }
 });
 
 // ── トースト ─────────────────────────────────────────────────
