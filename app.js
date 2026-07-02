@@ -7,11 +7,8 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import {
   getAuth,
-  EmailAuthProvider,
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
-  linkWithCredential,
-  signInAnonymously,
   updateProfile,
   signOut,
   onAuthStateChanged
@@ -92,12 +89,30 @@ let currentUser      = null;
 let allPosts         = [];
 let categories       = [];
 let activeCategory   = "all";
-let currentSort      = "latest";
+let currentSort      = "tried";
 let unsubscribePosts = null;
 let unsubscribeUserDoc = null;
 let currentAvatarEmoji = "🙂";
 let userBookmarks    = [];   // 現在のユーザーがブックマークした投稿ID
+let userRole         = "user"; // "user" | "admin"
+let userIsBlocked    = false;  // 管理者にブロックされたアカウント
+let justLoggedIn     = false;  // ログイン直後だけ管理者ページへ誘導するためのフラグ
+let unsubscribeCategories = null;
+let searchKeyword    = "";   // キーワード検索
 const openComments   = new Set(); // コメント欄を開いている投稿ID（再描画後も維持）
+const commentsCache  = {};   // postId -> コメント配列（再描画時のちらつき防止）
+
+// ── 不適切ワードのフィルタ（クライアント側の簡易チェック） ──
+const NG_WORDS = [
+  "死ね","しね","殺す","ころす","きもい","キモい","うざい","ウザい","ばか","バカ",
+  "あほ","アホ","ぶす","ブス","でぶ","デブ","クズ","くず","ゴミ","カス","かす",
+  "馬鹿","阿呆","知障","池沼","土人","エロ","セックス","ちんこ","まんこ","おっぱい",
+  "fuck","shit","bitch","asshole","sex","penis","porn"
+];
+function containsNgWord(text) {
+  const lower = String(text || "").toLowerCase();
+  return NG_WORDS.find(w => lower.includes(w.toLowerCase())) || null;
+}
 
 // カテゴリ色パレット（IDに対して安定した色を返す）
 const CAT_COLORS = [
@@ -109,6 +124,12 @@ const CAT_COLORS = [
   { bg: "rgba(0,172,193,0.15)",   text: "#006064",  border: "rgba(0,172,193,0.4)"   }, // シアン
   { bg: "rgba(255,193,7,0.18)",   text: "#7d5a00",  border: "rgba(255,193,7,0.5)"   }, // 黄
   { bg: "rgba(233,30,99,0.15)",   text: "#ad1457",  border: "rgba(233,30,99,0.4)"   }, // ピンク
+  { bg: "rgba(63,81,181,0.15)",   text: "#303f9f",  border: "rgba(63,81,181,0.4)"   }, // インディゴ
+  { bg: "rgba(0,150,136,0.15)",   text: "#00695c",  border: "rgba(0,150,136,0.4)"   }, // ティール
+  { bg: "rgba(121,85,72,0.15)",   text: "#5d4037",  border: "rgba(121,85,72,0.4)"   }, // ブラウン
+  { bg: "rgba(124,77,255,0.15)",  text: "#5e35b1",  border: "rgba(124,77,255,0.4)"  }, // バイオレット
+  { bg: "rgba(0,184,148,0.15)",   text: "#00866e",  border: "rgba(0,184,148,0.4)"   }, // エメラルド
+  { bg: "rgba(255,87,34,0.15)",   text: "#d84315",  border: "rgba(255,87,34,0.4)"   }, // ディープオレンジ
 ];
 
 function getCatColorIndex(categoryId) {
@@ -153,28 +174,39 @@ const appContainer       = document.getElementById("app-container");
 const authBtn            = document.getElementById("auth-btn");
 const logoutBtn          = document.getElementById("logout-btn");
 const userProfileEl      = document.getElementById("user-profile");
+const userGreeting       = document.getElementById("user-greeting");
 
 const navHomeBtn         = document.getElementById("nav-home-btn");
 const navMypageBtn       = document.getElementById("nav-mypage-btn");
+const navAdminBtn        = document.getElementById("nav-admin-btn");
 const headerLogo         = document.getElementById("header-logo");
 
 const homeView           = document.getElementById("home-view");
 const mypageView         = document.getElementById("mypage-view");
 const userProfileView    = document.getElementById("user-profile-view");
+const adminView          = document.getElementById("admin-view");
+const adminReportedContainer = document.getElementById("admin-reported-container");
+const adminReportedCount = document.getElementById("admin-reported-count");
+const adminCategoriesEl  = document.getElementById("admin-categories");
 
-const postTriggerInput   = document.getElementById("post-trigger-input");
+const postTriggerBtn     = document.getElementById("post-trigger-btn");
 const postForm           = document.getElementById("post-form");
 const postTitle          = document.getElementById("post-title");
 const postContent        = document.getElementById("post-content");
 const postImage          = document.getElementById("post-image");
+const postImagePreview   = document.getElementById("post-image-preview");
+const postImagePreviewImg= document.getElementById("post-image-preview-img");
+const postImageClear     = document.getElementById("post-image-clear");
 const postCategory       = document.getElementById("post-category");
 const addCategoryBtn     = document.getElementById("add-category-btn");
 const saveDraftBtn       = document.getElementById("save-draft-btn");
+const openDraftsBtn      = document.getElementById("open-drafts-btn");
 const cancelPostBtn      = document.getElementById("cancel-post-btn");
 const draftSavedMsg      = document.getElementById("draft-saved-msg");
 
 const filtersContainer   = document.getElementById("filters-container");
 const sortSelect         = document.getElementById("sort-select");
+const searchInput        = document.getElementById("search-input");
 const postsContainer     = document.getElementById("posts-container");
 
 const mypageNameText     = document.getElementById("mypage-name-text");
@@ -219,7 +251,11 @@ function hideWelcome() {
   localStorage.setItem(WELCOME_SHOWN_KEY, "1");
 }
 
-welcomeStartBtn.addEventListener("click", hideWelcome);
+welcomeStartBtn.addEventListener("click", () => {
+  hideWelcome();
+  // 未ログインなら登録/ログインを促す（キャンセルすれば閲覧のみ可能）
+  if (!isRegistered()) openAuthModal("register");
+});
 
 // ── Auth (メール + パスワード) ───────────────────────────────
 const authModal      = document.getElementById("auth-modal");
@@ -255,7 +291,7 @@ function setAuthMode(mode) {
   authPassword.autocomplete = isLogin ? "current-password" : "new-password";
   authModalDesc.textContent = isLogin
     ? "登録済みのメールアドレスとパスワードでログインします。"
-    : "メールアドレスとパスワードでアカウントを作成します。今のゲスト投稿はそのまま引き継がれます。";
+    : "メールアドレスとパスワードで無料のアカウントを作成します。";
   authError.classList.add("hidden");
 }
 
@@ -298,7 +334,7 @@ authBtn.addEventListener("click", () => openAuthModal("login"));
 authTabLogin.addEventListener("click", () => setAuthMode("login"));
 authTabRegister.addEventListener("click", () => setAuthMode("register"));
 cancelAuthBtn.addEventListener("click", closeAuthModal);
-authModal.addEventListener("click", (e) => { if (e.target === authModal) closeAuthModal(); });
+// 背景クリックでは閉じない（入力中のデータが消えるのを防ぐ）
 
 authForm.addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -309,19 +345,13 @@ authForm.addEventListener("submit", async (e) => {
 
   try {
     if (authMode === "register") {
-      if (auth.currentUser && auth.currentUser.isAnonymous) {
-        // 匿名アカウントをメール+パスワードに「昇格」(uid維持で投稿が消えない)
-        const cred = EmailAuthProvider.credential(email, password);
-        await linkWithCredential(auth.currentUser, cred);
-        showToast("アカウントを作成しました。次回からログインできます ✅");
-      } else {
-        await createUserWithEmailAndPassword(auth, email, password);
-        showToast("アカウントを作成しました ✅");
-      }
+      await createUserWithEmailAndPassword(auth, email, password);
+      showToast("アカウントを作成しました ✅");
     } else {
       await signInWithEmailAndPassword(auth, email, password);
       showToast("ログインしました ✅");
     }
+    justLoggedIn = true;   // 管理者なら直後に管理ページへ誘導
     closeAuthModal();
   } catch (err) {
     // 新規登録で「既に使用中」の場合はログインに切り替えて案内
@@ -339,36 +369,49 @@ authForm.addEventListener("submit", async (e) => {
 logoutBtn.addEventListener("click", () => signOut(auth));
 
 onAuthStateChanged(auth, async (user) => {
-  // 未ログインなら自動で匿名ログイン（Googleログイン不要で誰でもすぐ投稿できる）
+  // ── 未ログイン（ゲスト）──────────────────────────────
+  // 閲覧は誰でも可能。投稿・いいね・コメント・通報・保存はログイン必須。
   if (!user) {
-    try {
-      await signInAnonymously(auth);
-    } catch (e) {
-      if (e.code === "auth/operation-not-allowed" || e.code === "auth/admin-restricted-operation") {
-        showToast("匿名ログインが有効になっていません。Firebaseで有効化してください", "error");
-      } else {
-        showToast("接続に失敗しました: " + e.message, "error");
-      }
-    }
-    return; // 成功すれば user 付きで再度このコールバックが呼ばれる
+    currentUser = null;
+    userBookmarks = [];
+    userRole = "user";
+    userIsBlocked = false;
+    if (unsubscribeUserDoc) { unsubscribeUserDoc(); unsubscribeUserDoc = null; }
+
+    userProfileEl.classList.remove("hidden");
+    authBtn.classList.remove("hidden");
+    logoutBtn.classList.add("hidden");
+    userGreeting.classList.add("hidden");
+    userGreeting.textContent = "";
+    navMypageBtn.classList.add("hidden");
+    navAdminBtn.classList.add("hidden");
+    if (!adminView.classList.contains("hidden")) showView("home");
+
+    // ログアウト時は投稿フォームを閉じる（下書き中にログアウトしても投稿できないように）
+    postForm.classList.add("hidden");
+    postForm.reset();
+    clearImagePreview();
+    if (!mypageView.classList.contains("hidden")) showView("home");
+
+    renderPosts();
+    return;
   }
 
+  // ── ログイン済み ─────────────────────────────────────
   currentUser = user;
   userProfileEl.classList.remove("hidden");
-  postTriggerInput.placeholder = user.isAnonymous
-    ? "ログインして知恵をシェアする…"
-    : "知恵をシェアする...";
 
-  // 表示名（匿名ユーザーにはデフォルトのニックネームを付与）
-  const defaultName = "ゲスト" + user.uid.slice(0, 4);
   const uSnap = await getDoc(doc(db, "users", user.uid));
+  const justCreated = !uSnap.exists();
+  const defaultName = "ユーザー" + user.uid.slice(0, 4);
   let nickname;
-  if (!uSnap.exists()) {
+  if (justCreated) {
     nickname = user.displayName || defaultName;
     await setDoc(doc(db, "users", user.uid), {
       displayName: nickname,
       email: user.email || null,
       avatarEmoji: "🙂",
+      setupDone: false,
       updatedAt: serverTimestamp()
     });
   } else {
@@ -380,66 +423,90 @@ onAuthStateChanged(auth, async (user) => {
     }, { merge: true });
   }
 
-  // Authプロフィールにも表示名を反映（アプリ全体が currentUser.displayName を参照するため）
   if (currentUser.displayName !== nickname) {
     try { await updateProfile(currentUser, { displayName: nickname }); } catch (_) {}
   }
 
-  // ヘッダーはボタンのみ表示（ゲスト名は表示しない）
-  // 匿名ユーザー: 「新規登録/ログイン」を表示（ログアウトは不要なので隠す）
-  // 本登録ユーザー: ログアウトを表示（新規登録/ログインは隠す）
-  authBtn.classList.toggle("hidden", !user.isAnonymous);
-  logoutBtn.classList.toggle("hidden", user.isAnonymous);
+  // ヘッダー: ログアウトボタンを表示（名前チップは表示しない）
+  authBtn.classList.add("hidden");
+  logoutBtn.classList.remove("hidden");
+  userGreeting.classList.add("hidden");
+  navMypageBtn.classList.remove("hidden");
 
-  // マイページは本登録ユーザーのみ。匿名（ログアウト中）はナビを隠し、
-  // 既にマイページを開いていたらホームに戻す
-  navMypageBtn.classList.toggle("hidden", user.isAnonymous);
-  if (user.isAnonymous && !mypageView.classList.contains("hidden")) {
-    showView("home");
-  }
-
-  // アバター絵文字をローカルに記憶
+  // アバター絵文字
   const savedEmoji = uSnap.exists() ? (uSnap.data().avatarEmoji || "🙂") : "🙂";
   currentAvatarEmoji = savedEmoji;
   const mypageAvatarEl = document.getElementById("mypage-avatar-display");
   if (mypageAvatarEl) mypageAvatarEl.textContent = savedEmoji;
 
-  // ユーザードキュメントを購読し、ブックマーク・アバターをリアルタイム反映
+  // ユーザードキュメント購読（ブックマーク・アバター・表示名をリアルタイム反映）
   if (unsubscribeUserDoc) unsubscribeUserDoc();
   unsubscribeUserDoc = onSnapshot(doc(db, "users", user.uid), (snap) => {
     const data = snap.data() || {};
     userBookmarks = data.bookmarks || [];
+    userRole      = data.role || "user";
+    userIsBlocked = data.blocked === true;
     if (data.avatarEmoji) {
       currentAvatarEmoji = data.avatarEmoji;
       if (mypageAvatarEl) mypageAvatarEl.textContent = data.avatarEmoji;
     }
+    if (data.displayName) userGreeting.textContent = "👤 " + data.displayName;
+    // 管理ナビは管理者のみ
+    navAdminBtn.classList.toggle("hidden", userRole !== "admin");
+    if (userRole !== "admin" && !adminView.classList.contains("hidden")) showView("home");
+    // ログイン直後、管理者なら管理ページへ誘導
+    if (justLoggedIn) {
+      justLoggedIn = false;
+      if (userRole === "admin") { showView("admin"); showToast("管理者としてログインしました 🛡"); }
+    }
     renderPosts();
     updateMypageView();
+    if (!adminView.classList.contains("hidden")) renderAdminView();
   });
 
-  loadDraft();
   flushOfflineQueue();
   updateMypageView();
+
+  // 新規アカウントは初回プロフィール設定を表示（2回目以降は出さない）
+  if (justCreated || uSnap.data()?.setupDone === false) openSetupModal(nickname);
 });
 
 // ── ナビゲーション ──────────────────────────────────────────
-// 本登録ユーザーかどうか（匿名/未ログインは不可）
+// 本登録ユーザーかどうか（未ログインは不可）
 function isRegistered() {
-  return !!currentUser && !currentUser.isAnonymous;
+  return !!currentUser;
+}
+function isAdmin()   { return isRegistered() && userRole === "admin"; }
+function isBlocked() { return isRegistered() && userIsBlocked; }
+
+// ブロックされている場合に操作を弾く共通チェック
+function blockedGuard() {
+  if (isBlocked()) {
+    showToast("このアカウントは管理者により利用を制限されています", "error");
+    return true;
+  }
+  return false;
 }
 
 function showView(view) {
-  // マイページは本登録ユーザー専用。ログアウト中（匿名）は開けない
+  // マイページは本登録ユーザー専用
   if (view === "mypage" && !isRegistered()) {
     showToast("マイページの利用にはログインが必要です");
+    view = "home";
+  }
+  // 管理ページは管理者専用
+  if (view === "admin" && !isAdmin()) {
+    showToast("管理者専用ページです");
     view = "home";
   }
 
   homeView.classList.add("hidden");
   mypageView.classList.add("hidden");
   userProfileView.classList.add("hidden");
+  adminView.classList.add("hidden");
   navHomeBtn.classList.remove("active");
   navMypageBtn.classList.remove("active");
+  navAdminBtn.classList.remove("active");
 
   if (view === "home") {
     homeView.classList.remove("hidden");
@@ -450,29 +517,38 @@ function showView(view) {
     updateMypageView();
   } else if (view === "user-profile") {
     userProfileView.classList.remove("hidden");
+  } else if (view === "admin") {
+    adminView.classList.remove("hidden");
+    navAdminBtn.classList.add("active");
+    renderAdminView();
   }
 }
 
 navHomeBtn.addEventListener("click", () => showView("home"));
 navMypageBtn.addEventListener("click", () => showView("mypage"));
+navAdminBtn.addEventListener("click", () => showView("admin"));
 headerLogo.addEventListener("click", () => showView("home"));
 backToHomeBtn.addEventListener("click", () => showView("home"));
 
 // ── カテゴリ読み込み ─────────────────────────────────────────
-async function loadCategories() {
+function subscribeCategories() {
   const defaults = [
     { id: "housework", label: "家事" },
     { id: "saving",    label: "節約術" },
     { id: "points",    label: "ポイント運用" }
   ];
-  try {
-    const snap = await getDoc(doc(db, "settings", "categories"));
-    categories = snap.exists() ? snap.data().list : defaults;
-  } catch {
+  if (unsubscribeCategories) unsubscribeCategories();
+  // settings/categories をリアルタイム購読（追加したジャンルがリロード無しで反映される）
+  unsubscribeCategories = onSnapshot(doc(db, "settings", "categories"), (snap) => {
+    categories = (snap.exists() && Array.isArray(snap.data().list)) ? snap.data().list : defaults;
+    renderCategorySelects();
+    renderFilters();
+    if (!adminView.classList.contains("hidden")) renderAdminView();
+  }, () => {
     categories = defaults;
-  }
-  renderCategorySelects();
-  renderFilters();
+    renderCategorySelects();
+    renderFilters();
+  });
 }
 
 function renderCategorySelects() {
@@ -484,8 +560,8 @@ function renderCategorySelects() {
 }
 
 function renderFilters() {
-  // 投稿が1件以上あるジャンルだけ表示（未投稿のジャンルはフィルターに出さない）
-  const usedCats = new Set(allPosts.map(p => p.category));
+  // 投稿が1件以上あるジャンルだけ表示（通報非表示・未投稿のジャンルは出さない）
+  const usedCats = new Set(allPosts.filter(p => !p.hidden).map(p => p.category));
   const visible  = categories.filter(c => usedCats.has(c.id));
   // 選択中ジャンルの投稿が無くなったら「すべて」に戻す
   if (activeCategory !== "all" && !usedCats.has(activeCategory)) {
@@ -515,43 +591,139 @@ function renderFilters() {
 }
 
 addCategoryBtn.addEventListener("click", async () => {
-  if (!isRegistered()) { showToast("ログインが必要です"); return; }
-  const label = prompt("新しいカテゴリ名を入力してください:");
-  if (!label) return;
-  const id = label.toLowerCase().replace(/\s+/g, "_") + "_" + Date.now();
+  if (!isRegistered()) { showToast("ログインが必要です"); openAuthModal("login"); return; }
+  const input = prompt("新しいジャンル名（10文字以内）:");
+  if (input === null) return;                 // キャンセル
+  const label = input.trim();
+  if (!label) { showToast("ジャンル名を入力してください", "error"); return; }
+  if (label.length > 10) { showToast("ジャンル名は10文字以内にしてください", "error"); return; }
+  const ng = containsNgWord(label);
+  if (ng) { showToast("不適切な語句が含まれています", "error"); return; }
+  // 同名がある場合は追加せず、その既存ジャンルを選択状態にする
+  const existing = categories.find(c => c.label === label);
+  if (existing) { postCategory.value = existing.id; showToast("同じ名前のジャンルが既にあります"); return; }
+
+  const id = "cat_" + Date.now();
   // 既存ジャンルと色がかぶらないよう、未使用の色番号を割り当てる
-  categories.push({ id, label, color: pickUnusedColorIndex() });
-  await setDoc(doc(db, "settings", "categories"), { list: categories });
-  renderCategorySelects();
-  renderFilters();
-  showToast("カテゴリを追加しました ✅");
+  const next = [...categories, { id, label, color: pickUnusedColorIndex() }];
+  try {
+    await setDoc(doc(db, "settings", "categories"), { list: next });
+    // 購読でも更新されるが、すぐ選択できるよう手動でも反映
+    categories = next;
+    renderCategorySelects();
+    postCategory.value = id;
+    showToast("ジャンル「" + label + "」を追加しました ✅");
+  } catch {
+    showToast("ジャンルの追加に失敗しました", "error");
+  }
 });
 
 // ── 投稿フォーム ─────────────────────────────────────────────
 function openPostForm() {
-  // 投稿は本登録ユーザーのみ。ゲスト（匿名）はログインを促す
+  // 投稿は本登録ユーザーのみ。ゲストはログインを促す
   if (!isRegistered()) {
     showToast("投稿するにはログインが必要です");
     openAuthModal("login");
     return;
   }
+  if (blockedGuard()) return;
   postForm.classList.remove("hidden");
   postTitle.focus();
 }
-postTriggerInput.addEventListener("click", openPostForm);
-cancelPostBtn.addEventListener("click", () => postForm.classList.add("hidden"));
+postTriggerBtn.addEventListener("click", openPostForm);
+cancelPostBtn.addEventListener("click", () => {
+  postForm.classList.add("hidden");
+  postForm.reset();
+  clearImagePreview();
+});
+
+// ── 画像プレビュー ──
+function clearImagePreview() {
+  if (postImage) postImage.value = "";
+  if (postImagePreview) postImagePreview.classList.add("hidden");
+  if (postImagePreviewImg) postImagePreviewImg.src = "";
+}
+postImage.addEventListener("change", () => {
+  const file = postImage.files[0];
+  if (!file) { clearImagePreview(); return; }
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    postImagePreviewImg.src = e.target.result;
+    postImagePreview.classList.remove("hidden");
+  };
+  reader.readAsDataURL(file);
+});
+postImageClear.addEventListener("click", clearImagePreview);
+
+// ── 下書き（複数保存） ──────────────────────────────────────
+const DRAFTS_KEY = "lifetips_drafts";
+const draftsModal   = document.getElementById("drafts-modal");
+const draftsListEl  = document.getElementById("drafts-list");
+const closeDraftsBtn= document.getElementById("close-drafts-btn");
+
+function getDrafts() {
+  try { return JSON.parse(localStorage.getItem(DRAFTS_KEY) || "[]"); }
+  catch { return []; }
+}
+function saveDrafts(list) { localStorage.setItem(DRAFTS_KEY, JSON.stringify(list)); }
 
 saveDraftBtn.addEventListener("click", () => {
-  localStorage.setItem("draft_title",   postTitle.value);
-  localStorage.setItem("draft_content", postContent.value);
+  const title = postTitle.value.trim();
+  const content = postContent.value.trim();
+  if (!title && !content) { showToast("下書きする内容がありません", "error"); return; }
+  const drafts = getDrafts();
+  drafts.unshift({ id: "d" + Date.now(), title, content, category: postCategory.value, savedAt: Date.now() });
+  saveDrafts(drafts);
   draftSavedMsg.classList.remove("hidden");
   setTimeout(() => draftSavedMsg.classList.add("hidden"), 2000);
 });
 
-function loadDraft() {
-  postTitle.value   = localStorage.getItem("draft_title")   || "";
-  postContent.value = localStorage.getItem("draft_content") || "";
+function loadDraftIntoForm(d) {
+  postTitle.value = d.title || "";
+  postContent.value = d.content || "";
+  if (d.category && categories.some(c => c.id === d.category)) postCategory.value = d.category;
+  postForm.classList.remove("hidden");
 }
+
+function renderDraftsList() {
+  const drafts = getDrafts();
+  draftsListEl.innerHTML = drafts.length
+    ? drafts.map(d => {
+        const date = new Date(d.savedAt).toLocaleString("ja-JP", { month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit" });
+        const title = d.title || "(無題)";
+        const body  = d.content || "";
+        return `<div class="draft-item">
+          <div class="draft-item-main" data-id="${d.id}">
+            <div class="draft-item-title">${escHtml(title)}</div>
+            <div class="draft-item-meta">${escHtml(body.slice(0,30))}${body.length>30?"…":""} ・ ${date}</div>
+          </div>
+          <button class="draft-delete-btn" data-id="${d.id}" title="削除">🗑</button>
+        </div>`;
+      }).join("")
+    : `<p class="drafts-empty">保存した下書きはありません</p>`;
+
+  draftsListEl.querySelectorAll(".draft-item-main").forEach(el => {
+    el.addEventListener("click", () => {
+      const d = getDrafts().find(x => x.id === el.dataset.id);
+      if (d) { loadDraftIntoForm(d); closeDraftsModal(); showToast("下書きを読み込みました"); }
+    });
+  });
+  draftsListEl.querySelectorAll(".draft-delete-btn").forEach(btn => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      saveDrafts(getDrafts().filter(x => x.id !== btn.dataset.id));
+      renderDraftsList();
+    });
+  });
+}
+function openDraftsModal() { renderDraftsList(); draftsModal.classList.remove("hidden"); }
+function closeDraftsModal() { draftsModal.classList.add("hidden"); }
+openDraftsBtn.addEventListener("click", () => {
+  if (!isRegistered()) { showToast("ログインが必要です"); return; }
+  openDraftsModal();
+});
+closeDraftsBtn.addEventListener("click", closeDraftsModal);
+draftsModal.addEventListener("click", (e) => { if (e.target === draftsModal) closeDraftsModal(); });
 
 // 画像圧縮
 async function compressImage(file) {
@@ -579,7 +751,12 @@ async function compressImage(file) {
 
 postForm.addEventListener("submit", async (e) => {
   e.preventDefault();
-  if (!isRegistered()) { showToast("投稿するにはログインが必要です"); return; }
+  if (!isRegistered()) { showToast("投稿するにはログインが必要です"); openAuthModal("login"); return; }
+  if (blockedGuard()) return;
+
+  // 不適切ワードのチェック
+  const ng = containsNgWord(postTitle.value) || containsNgWord(postContent.value);
+  if (ng) { showToast("不適切な語句が含まれているため投稿できません", "error"); return; }
 
   const file = postImage.files[0];
   if (file && file.size > 3 * 1024 * 1024) {
@@ -596,8 +773,8 @@ postForm.addEventListener("submit", async (e) => {
     authorId:          currentUser.uid,
     authorAvatarEmoji: currentAvatarEmoji,
     image:             imageData,
-    likes:             0,
-    likedBy:           []
+    triedBy:           [],
+    effectiveBy:       []
   };
 
   if (!navigator.onLine) {
@@ -607,8 +784,7 @@ postForm.addEventListener("submit", async (e) => {
     saveOfflineQueue(queue);
     postForm.reset();
     postForm.classList.add("hidden");
-    localStorage.removeItem("draft_title");
-    localStorage.removeItem("draft_content");
+    clearImagePreview();
     showToast("オフラインのため一時保存しました。オンライン時に自動送信されます 📥");
     return;
   }
@@ -621,8 +797,7 @@ postForm.addEventListener("submit", async (e) => {
     });
     postForm.reset();
     postForm.classList.add("hidden");
-    localStorage.removeItem("draft_title");
-    localStorage.removeItem("draft_content");
+    clearImagePreview();
     showToast("投稿しました ✅");
   } catch (err) {
     // 送信失敗時もオフラインキューに保存
@@ -644,6 +819,7 @@ function subscribePosts() {
     renderFilters();   // 投稿の有無に応じてジャンルの表示を更新
     renderPosts();
     updateMypageView();
+    if (!adminView.classList.contains("hidden")) renderAdminView();
   });
 }
 
@@ -652,28 +828,70 @@ sortSelect.addEventListener("change", (e) => {
   renderPosts();
 });
 
-function renderPosts() {
-  let posts = activeCategory === "all"
-    ? [...allPosts]
-    : allPosts.filter(p => p.category === activeCategory);
+searchInput.addEventListener("input", (e) => {
+  searchKeyword = e.target.value.trim();
+  renderPosts();
+});
 
-  if (currentSort === "likes") {
-    posts.sort((a, b) => (b.likes || 0) - (a.likes || 0));
+function renderPosts() {
+  // 通報により非表示になった投稿は公開掲示板に出さない（管理者ページへ）
+  const visible = allPosts.filter(p => !p.hidden);
+  let posts = activeCategory === "all"
+    ? [...visible]
+    : visible.filter(p => p.category === activeCategory);
+
+  // キーワード検索（タイトル・本文）
+  if (searchKeyword) {
+    const kw = searchKeyword.toLowerCase();
+    posts = posts.filter(p =>
+      (p.title || "").toLowerCase().includes(kw) ||
+      (p.content || "").toLowerCase().includes(kw)
+    );
+  }
+
+  if (currentSort === "tried") {
+    // 試した順 = 試した人数（同数なら効果あり数）
+    posts.sort((a, b) =>
+      (b.triedBy?.length || 0) - (a.triedBy?.length || 0) ||
+      (b.effectiveBy?.length || 0) - (a.effectiveBy?.length || 0)
+    );
   }
 
   postsContainer.innerHTML = posts.length
     ? posts.map(p => buildPostCard(p, false)).join("")
-    : `<p style="text-align:center;color:var(--text-muted);padding:2rem;">まだ投稿がありません</p>`;
+    : `<p style="text-align:center;color:var(--text-muted);padding:2rem;">${searchKeyword ? "該当する投稿が見つかりませんでした" : "まだ投稿がありません"}</p>`;
 
   attachPostEvents(postsContainer, false);
 }
 
+// 効果あり率を小さなドーナツ円グラフで表示（緑=効果あり / グレー=イマイチ）
+function effectDonutHtml(rate, effectiveCount, triedCount) {
+  const iffy = triedCount - effectiveCount;
+  return `
+  <span class="effect-donut" title="効果あり ${rate}%（効果あり ${effectiveCount}人 / イマイチ ${iffy}人 / 計 ${triedCount}人）">
+    <svg viewBox="0 0 36 36" width="40" height="40" role="img" aria-label="効果あり ${rate}%">
+      <circle cx="18" cy="18" r="15.9155" fill="none" stroke="#e3e8f0" stroke-width="4"></circle>
+      <circle cx="18" cy="18" r="15.9155" fill="none" stroke="#34a853" stroke-width="4"
+        stroke-dasharray="${rate} ${100 - rate}" stroke-dashoffset="25" stroke-linecap="round"></circle>
+      <text x="18" y="20.5" text-anchor="middle" font-size="9" font-weight="700" fill="#1e7e40">${rate}%</text>
+    </svg>
+    <span class="effect-donut-label">効果</span>
+  </span>`;
+}
+
 function buildPostCard(post, isOwner) {
   const catLabel  = categories.find(c => c.id === post.category)?.label || post.category;
-  const isLiked   = currentUser && post.likedBy?.includes(currentUser.uid);
   const isBookmarked = currentUser && userBookmarks.includes(post.id);
   const isAuthor  = currentUser && post.authorId === currentUser.uid;
-  const isPopular = (post.likes || 0) >= 3;
+  // 「試した！」実証データ（配列ベース・解除可能）
+  const triedBy        = post.triedBy || [];
+  const effectiveBy    = post.effectiveBy || [];
+  const hasTried       = currentUser && triedBy.includes(currentUser.uid);
+  const triedCount     = triedBy.length;
+  const effectiveCount = effectiveBy.length;
+  const effectRate     = triedCount ? Math.round(effectiveCount / triedCount * 100) : 0;
+  const isPopular = triedCount >= 3;
+  const isReported = getReportedPosts().includes(post.id);
   const date      = post.updatedAt?.toDate
     ? post.updatedAt.toDate().toLocaleDateString("ja-JP")
     : "";
@@ -684,7 +902,7 @@ function buildPostCard(post, isOwner) {
   const catColor = getCatColor(post.category);
 
   return `
-  <article class="post-card glass-panel" data-id="${post.id}">
+  <article class="post-card glass-panel ${isReported ? "reported" : ""}" data-id="${post.id}">
     <div class="post-card-header">
       <div class="post-author-info">
         ${avatar}
@@ -694,6 +912,8 @@ function buildPostCard(post, isOwner) {
         </div>
       </div>
       <div class="post-meta-right">
+        ${(!post.hidden && triedCount) ? effectDonutHtml(effectRate, effectiveCount, triedCount) : ""}
+        ${post.hidden ? `<span class="hidden-badge">🚩 非表示中（通報）</span>` : ""}
         ${isPopular ? `<span class="popular-badge">★ 人気</span>` : ""}
         <span class="post-category-tag" style="background:${catColor.bg};color:${catColor.text};border-color:${catColor.border};">${escHtml(catLabel)}</span>
       </div>
@@ -702,24 +922,29 @@ function buildPostCard(post, isOwner) {
     <p class="post-content">${escHtml(post.content)}</p>
     ${post.image ? `<img src="${post.image}" class="post-image" loading="lazy" />` : ""}
     <div class="post-footer">
-      <button class="like-btn ${isLiked ? "liked" : ""}" data-id="${post.id}" title="いいね">
-        ❤️ ${post.likes || 0}
+      ${post.hidden ? "" : `
+      <button class="tried-btn ${hasTried ? "tried" : ""}" data-id="${post.id}" ${!currentUser ? "disabled" : ""} title="${!currentUser ? "ログインすると報告できます" : (hasTried ? "クリックで取り消し" : "試した！")}" aria-pressed="${hasTried}">
+        🙌 ${hasTried ? "試した✓" : "試した"} ${triedCount}
       </button>
       <button class="comment-toggle-btn" data-id="${post.id}" title="コメントを見る">
         💬 ${post.commentCount || 0}
       </button>
       <button class="bookmark-btn ${isBookmarked ? "bookmarked" : ""}" data-id="${post.id}" title="${isBookmarked ? "ブックマーク済み" : "ブックマークに保存"}" aria-pressed="${isBookmarked}">
         ${isBookmarked ? "🔖 保存済み" : "🔖 保存"}
-      </button>
+      </button>`}
       ${isAuthor ? `
         <button class="edit-btn secondary-btn small-btn" data-id="${post.id}">編集</button>
-        <button class="delete-btn secondary-btn small-btn danger" data-id="${post.id}">削除</button>
+        <button class="delete-btn secondary-btn small-btn danger icon-only" data-id="${post.id}" title="削除">🗑</button>
+      ` : (post.hidden ? "" : (isReported ? `
+        <button class="report-btn reported" disabled title="通報済み">🚩 通報済み</button>
       ` : `
         <button class="report-btn" data-id="${post.id}" data-title="${escHtml(post.title)}" data-author="${escHtml(post.authorId || "")}" title="この投稿を通報する">🚩 通報</button>
-      `}
+      `))}
     </div>
+    ${(!post.hidden && triedCount) ? `<div class="tried-stats"><span>✅ ${effectRate}%が効果あり（${triedCount}人中${effectiveCount}人）</span></div>` : ""}
+    ${post.hidden ? `<p class="hidden-note">この投稿は通報により非表示中です。反応・コメントはできません。</p>` : `
     <div class="comments-wrap ${openComments.has(post.id) ? "" : "hidden"}" data-comments-for="${post.id}">
-      <div class="comments-list"><p class="comments-loading">読み込み中…</p></div>
+      <div class="comments-list">${commentsListInnerHtml(post.id)}</div>
       ${currentUser ? `
         <form class="comment-form" data-id="${post.id}">
           <span class="comment-form-avatar">${currentAvatarEmoji}</span>
@@ -727,27 +952,11 @@ function buildPostCard(post, isOwner) {
           <button type="submit" class="primary-btn small-btn">送信</button>
         </form>` : `
         <p class="comment-login-hint">コメントするにはログインが必要です</p>`}
-    </div>
+    </div>`}
   </article>`;
 }
 
 function attachPostEvents(container, isMyPage) {
-  // いいね
-  container.querySelectorAll(".like-btn").forEach(btn => {
-    btn.addEventListener("click", async () => {
-      if (!currentUser) { showToast("ログインが必要です"); return; }
-      const id    = btn.dataset.id;
-      const post  = allPosts.find(p => p.id === id);
-      if (!post) return;
-      const ref   = doc(db, "posts", id);
-      const liked = post.likedBy?.includes(currentUser.uid);
-      await updateDoc(ref, {
-        likes:   increment(liked ? -1 : 1),
-        likedBy: liked ? arrayRemove(currentUser.uid) : arrayUnion(currentUser.uid)
-      });
-    });
-  });
-
   // 編集
   container.querySelectorAll(".edit-btn").forEach(btn => {
     btn.addEventListener("click", () => {
@@ -758,6 +967,15 @@ function attachPostEvents(container, isMyPage) {
       editPostContent.value = post.content;
       renderCategorySelects();
       editPostCategory.value = post.category;
+      // 既存画像をプレビュー表示
+      editPostImage.value = "";
+      if (post.image) {
+        editImagePreviewImg.src = post.image;
+        editImagePreview.classList.remove("hidden");
+      } else {
+        editImagePreview.classList.add("hidden");
+        editImagePreviewImg.src = "";
+      }
       editModal.classList.remove("hidden");
     });
   });
@@ -774,7 +992,7 @@ function attachPostEvents(container, isMyPage) {
   // ── ブックマーク ──
   container.querySelectorAll(".bookmark-btn").forEach(btn => {
     btn.addEventListener("click", async () => {
-      if (!currentUser) { showToast("ログインが必要です"); return; }
+      if (!isRegistered()) { showToast("保存するにはログインが必要です"); openAuthModal("login"); return; }
       const id     = btn.dataset.id;
       const saved  = userBookmarks.includes(id);
       try {
@@ -788,10 +1006,35 @@ function attachPostEvents(container, isMyPage) {
     });
   });
 
+  // ── 試した！（トグル: 未報告→モーダル / 報告済み→解除。ログアウト中は無効） ──
+  container.querySelectorAll(".tried-btn").forEach(btn => {
+    if (btn.disabled) return; // 未ログインは変更不可
+    btn.addEventListener("click", async () => {
+      if (!isRegistered()) { showToast("「試した！」にはログインが必要です"); openAuthModal("login"); return; }
+      if (blockedGuard()) return;
+      const id = btn.dataset.id;
+      const post = allPosts.find(p => p.id === id);
+      if (!post) return;
+      if (post.triedBy?.includes(currentUser.uid)) {
+        // 解除
+        try {
+          await updateDoc(doc(db, "posts", id), {
+            triedBy:     arrayRemove(currentUser.uid),
+            effectiveBy: arrayRemove(currentUser.uid)
+          });
+          showToast("「試した」を取り消しました");
+        } catch { showToast("操作に失敗しました", "error"); }
+      } else {
+        openTriedModal(id, post.title || "");
+      }
+    });
+  });
+
   // ── 通報 ──
   container.querySelectorAll(".report-btn").forEach(btn => {
+    if (btn.disabled) return; // 通報済み
     btn.addEventListener("click", () => {
-      if (!currentUser) { showToast("ログインが必要です"); return; }
+      if (!isRegistered()) { showToast("通報するにはログインが必要です"); openAuthModal("login"); return; }
       openReportModal(btn.dataset.id, btn.dataset.title, btn.dataset.author);
     });
   });
@@ -809,20 +1052,25 @@ function attachPostEvents(container, isMyPage) {
     });
   });
 
-  // すでに開いているコメント欄は再描画後に再読み込み
+  // すでに開いているコメント欄: キャッシュがあれば即描画（ちらつき防止）、無ければ取得
   container.querySelectorAll(".comments-wrap:not(.hidden)").forEach(wrap => {
-    loadComments(wrap.dataset.commentsFor, wrap);
+    const id = wrap.dataset.commentsFor;
+    if (commentsCache[id]) renderComments(wrap, id);
+    else loadComments(id, wrap);
   });
 
   // ── コメント投稿 ──
   container.querySelectorAll(".comment-form").forEach(form => {
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
-      if (!currentUser) { showToast("ログインが必要です"); return; }
+      if (!isRegistered()) { showToast("コメントするにはログインが必要です"); openAuthModal("login"); return; }
+      if (blockedGuard()) return;
       const id    = form.dataset.id;
       const input = form.querySelector(".comment-input");
       const text  = input.value.trim();
       if (!text) return;
+      const ng = containsNgWord(text);
+      if (ng) { showToast("不適切な語句が含まれています", "error"); return; }
       input.value = "";
       try {
         await addDoc(collection(db, "posts", id, "comments"), {
@@ -869,12 +1117,11 @@ async function openUserProfileView(authorId, authorName) {
   profileViewLikes.textContent = "読み込み中…";
   userPostsContainer.innerHTML = `<p style="text-align:center;color:var(--text-muted);padding:2rem;">読み込み中...</p>`;
 
-  // users コレクションから photoURL を取得
+  // 投稿者のアバター絵文字を表示（投稿カードのアイコンと一致させる）
   try {
     const uSnap = await getDoc(doc(db, "users", authorId));
-    if (uSnap.exists() && uSnap.data().photoURL) {
-      profileViewAvatar.innerHTML =
-        `<img src="${uSnap.data().photoURL}" style="width:64px;height:64px;border-radius:50%;object-fit:cover;" />`;
+    if (uSnap.exists() && uSnap.data().avatarEmoji) {
+      profileViewAvatar.textContent = uSnap.data().avatarEmoji;
     }
   } catch(_) {}
 
@@ -885,11 +1132,11 @@ async function openUserProfileView(authorId, authorName) {
     orderBy("createdAt", "desc")
   );
   const snap = await getDocs(q);
-  const posts = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  const posts = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(p => !p.hidden);
 
-  const totalLikes = posts.reduce((sum, p) => sum + (p.likes || 0), 0);
+  const totalTried = posts.reduce((sum, p) => sum + (p.triedBy?.length || 0), 0);
   profileViewCount.textContent = `${posts.length} 📝`;
-  profileViewLikes.textContent = `${totalLikes} ❤️`;
+  profileViewLikes.textContent = `${totalTried} 🙌`;
 
   userPostsContainer.innerHTML = posts.length
     ? posts.map(p => buildPostCard(p, false)).join("")
@@ -898,51 +1145,69 @@ async function openUserProfileView(authorId, authorName) {
   attachPostEvents(userPostsContainer, false);
 }
 
-// ── コメント読み込み ────────────────────────────────────────
-async function loadComments(postId, wrap) {
+// ── コメント描画（キャッシュ利用でちらつき防止） ──────────────
+function commentItemHtml(c, postId) {
+  const emoji  = c.authorAvatarEmoji || "🙂";
+  const date   = c.createdAt?.toDate ? c.createdAt.toDate().toLocaleDateString("ja-JP") : "";
+  const canDel = currentUser && c.authorId === currentUser.uid;
+  return `
+  <div class="comment-item">
+    <span class="comment-avatar">${emoji}</span>
+    <div class="comment-body">
+      <div class="comment-meta">
+        <span class="comment-author">${escHtml(c.author)}</span>
+        <span class="comment-date">${date}</span>
+      </div>
+      <p class="comment-text">${escHtml(c.text)}</p>
+    </div>
+    ${canDel ? `<button class="comment-delete-btn" data-post="${postId}" data-comment="${c.id}" title="削除">✕</button>` : ""}
+  </div>`;
+}
+
+function commentsListInnerHtml(postId) {
+  const comments = commentsCache[postId];
+  if (!comments) return `<p class="comments-loading">読み込み中…</p>`;
+  return comments.length
+    ? comments.map(c => commentItemHtml(c, postId)).join("")
+    : `<p class="comments-empty">まだコメントはありません。最初のコメントを書いてみましょう！</p>`;
+}
+
+function attachCommentDeleteHandlers(listEl) {
+  listEl.querySelectorAll(".comment-delete-btn").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      if (!confirm("このコメントを削除しますか？")) return;
+      const pid = btn.dataset.post, cid = btn.dataset.comment;
+      try {
+        await deleteDoc(doc(db, "posts", pid, "comments", cid));
+        await updateDoc(doc(db, "posts", pid), { commentCount: increment(-1) });
+        if (commentsCache[pid]) commentsCache[pid] = commentsCache[pid].filter(c => c.id !== cid);
+        const wrap = document.querySelector(`.comments-wrap[data-comments-for="${pid}"]`);
+        if (wrap) renderComments(wrap, pid);
+      } catch {
+        showToast("削除に失敗しました", "error");
+      }
+    });
+  });
+}
+
+// キャッシュの内容で即座に描画（ネットワーク待ちが無いのでちらつかない）
+function renderComments(wrap, postId) {
   const listEl = wrap.querySelector(".comments-list");
   if (!listEl) return;
+  listEl.innerHTML = commentsListInnerHtml(postId);
+  attachCommentDeleteHandlers(listEl);
+}
+
+// サーバーから取得してキャッシュを更新 → 再描画
+async function loadComments(postId, wrap) {
   try {
     const q = query(collection(db, "posts", postId, "comments"), orderBy("createdAt", "asc"));
     const snap = await getDocs(q);
-    const comments = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-
-    listEl.innerHTML = comments.length
-      ? comments.map(c => {
-          const emoji   = c.authorAvatarEmoji || "🙂";
-          const date    = c.createdAt?.toDate ? c.createdAt.toDate().toLocaleDateString("ja-JP") : "";
-          const canDel  = currentUser && c.authorId === currentUser.uid;
-          return `
-          <div class="comment-item">
-            <span class="comment-avatar">${emoji}</span>
-            <div class="comment-body">
-              <div class="comment-meta">
-                <span class="comment-author">${escHtml(c.author)}</span>
-                <span class="comment-date">${date}</span>
-              </div>
-              <p class="comment-text">${escHtml(c.text)}</p>
-            </div>
-            ${canDel ? `<button class="comment-delete-btn" data-post="${postId}" data-comment="${c.id}" title="削除">✕</button>` : ""}
-          </div>`;
-        }).join("")
-      : `<p class="comments-empty">まだコメントはありません。最初のコメントを書いてみましょう！</p>`;
-
-    // コメント削除
-    listEl.querySelectorAll(".comment-delete-btn").forEach(btn => {
-      btn.addEventListener("click", async () => {
-        if (!confirm("このコメントを削除しますか？")) return;
-        const pid = btn.dataset.post, cid = btn.dataset.comment;
-        try {
-          await deleteDoc(doc(db, "posts", pid, "comments", cid));
-          await updateDoc(doc(db, "posts", pid), { commentCount: increment(-1) });
-          loadComments(pid, wrap);
-        } catch {
-          showToast("削除に失敗しました", "error");
-        }
-      });
-    });
+    commentsCache[postId] = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderComments(wrap, postId);
   } catch {
-    listEl.innerHTML = `<p class="comments-empty">コメントを読み込めませんでした</p>`;
+    const listEl = wrap.querySelector(".comments-list");
+    if (listEl && !commentsCache[postId]) listEl.innerHTML = `<p class="comments-empty">コメントを読み込めませんでした</p>`;
   }
 }
 
@@ -968,9 +1233,10 @@ AVATAR_EMOJIS.forEach(emoji => {
     currentAvatarEmoji = emoji;
     mypageAvatarDisplay.textContent = emoji;
     avatarModal.classList.add("hidden");
-    // Firestoreに保存
+    // Firestoreに保存し、自分の投稿のアイコンも揃える
     if (currentUser) {
       await setDoc(doc(db, "users", currentUser.uid), { avatarEmoji: emoji }, { merge: true });
+      await syncAuthorInfoToPosts();
     }
     showToast("アイコンを変更しました ✅");
   });
@@ -984,13 +1250,25 @@ mypageAvatarDisplay && mypageAvatarDisplay.addEventListener("click", () => {
 if (cancelAvatarBtn) cancelAvatarBtn.addEventListener("click", () => avatarModal.classList.add("hidden"));
 if (avatarModal) avatarModal.addEventListener("click", e => { if (e.target === avatarModal) avatarModal.classList.add("hidden"); });
 
+// 表示名・アバターを自分の投稿にも反映（リロード不要で同期）
+async function syncAuthorInfoToPosts() {
+  if (!currentUser) return;
+  const name  = currentUser.displayName || "名無しさん";
+  const emoji = currentAvatarEmoji;
+  try {
+    const q = query(collection(db, "posts"), where("authorId", "==", currentUser.uid));
+    const snap = await getDocs(q);
+    await Promise.all(snap.docs.map(d => updateDoc(d.ref, { author: name, authorAvatarEmoji: emoji })));
+  } catch (_) {}
+}
+
 // ── マイページ ───────────────────────────────────────────────
 function updateMypageView() {
   if (!currentUser) return;
   mypageNameText.textContent = currentUser.displayName || currentUser.email || "名無しさん";
   const myPosts    = allPosts.filter(p => p.authorId === currentUser.uid);
-  const myLikes    = myPosts.reduce((sum, p) => sum + (p.likes || 0), 0);
-  totalLikesEl.textContent = `${myLikes} ❤️`;
+  const myTried    = myPosts.reduce((sum, p) => sum + (p.triedBy?.length || 0), 0);
+  totalLikesEl.textContent = `${myTried} 🙌`;
   myPostsContainer.innerHTML = myPosts.length
     ? myPosts.map(p => buildPostCard(p, true)).join("")
     : `<p style="text-align:center;color:var(--text-muted);padding:2rem;">まだ投稿がありません</p>`;
@@ -1011,16 +1289,136 @@ function updateMypageView() {
 }
 
 editNameBtn.addEventListener("click", async () => {
-  const newName = prompt("新しい表示名を入力してください:", currentUser.displayName || "");
-  if (!newName) return;
+  if (!isRegistered()) { showToast("ログインが必要です"); return; }
+  const input = prompt("新しい表示名（20文字以内）:", currentUser.displayName || "");
+  if (input === null) return;
+  const newName = input.trim();
+  if (!newName) { showToast("表示名を入力してください", "error"); return; }
+  if (newName.length > 20) { showToast("表示名は20文字以内にしてください", "error"); return; }
+  if (containsNgWord(newName)) { showToast("不適切な語句が含まれています", "error"); return; }
   await updateDoc(doc(db, "users", currentUser.uid), { displayName: newName });
-  // Auth の displayName も更新
   await updateProfile(currentUser, { displayName: newName });
+  userGreeting.textContent = "👤 " + newName;
+  await syncAuthorInfoToPosts();   // 投稿の表示名も揃える
   updateMypageView();
   showToast("表示名を更新しました ✅");
 });
 
+// ── 管理者ページ ─────────────────────────────────────────────
+function renderAdminView() {
+  if (!isAdmin()) return;
+
+  // 通報により非表示になった投稿
+  const reported = allPosts.filter(p => p.hidden);
+  adminReportedCount.textContent = reported.length;
+  adminReportedContainer.innerHTML = reported.length
+    ? reported.map(p => {
+        const emoji  = p.authorAvatarEmoji || "🙂";
+        const reason = p.reportReason
+          ? `<div class="admin-report-reason">通報理由: ${escHtml(p.reportReason)}${p.reportDetail ? "（" + escHtml(p.reportDetail) + "）" : ""}</div>`
+          : "";
+        return `
+        <article class="post-card glass-panel" data-id="${p.id}">
+          <div class="post-card-header">
+            <div class="post-author-info">
+              <span class="author-avatar author-avatar-text">${emoji}</span>
+              <div><span class="post-author-name">${escHtml(p.author)}</span></div>
+            </div>
+          </div>
+          ${reason}
+          <h3 class="post-title">${escHtml(p.title)}</h3>
+          <p class="post-content">${escHtml(p.content)}</p>
+          ${p.image ? `<img src="${p.image}" class="post-image" loading="lazy" />` : ""}
+          <div class="admin-actions">
+            <button class="secondary-btn small-btn admin-restore" data-id="${p.id}">↩ 公開に戻す</button>
+            <button class="secondary-btn small-btn danger admin-delete" data-id="${p.id}">🗑 投稿を削除</button>
+            <button class="secondary-btn small-btn danger admin-block" data-author="${escHtml(p.authorId || "")}">🚫 投稿者をブロック</button>
+          </div>
+        </article>`;
+      }).join("")
+    : `<p class="admin-empty">通報された投稿はありません 🎉</p>`;
+
+  adminReportedContainer.querySelectorAll(".admin-restore").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      try {
+        await updateDoc(doc(db, "posts", btn.dataset.id), { hidden: false });
+        showToast("投稿を公開に戻しました");
+      } catch { showToast("操作に失敗しました", "error"); }
+    });
+  });
+  adminReportedContainer.querySelectorAll(".admin-delete").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      if (!confirm("この投稿を完全に削除しますか？")) return;
+      try {
+        await deleteDoc(doc(db, "posts", btn.dataset.id));
+        showToast("投稿を削除しました");
+      } catch { showToast("削除に失敗しました", "error"); }
+    });
+  });
+  adminReportedContainer.querySelectorAll(".admin-block").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const authorId = btn.dataset.author;
+      if (!authorId) { showToast("投稿者を特定できません", "error"); return; }
+      if (!confirm("この投稿者をブロックしますか？（投稿・コメント・いいねができなくなります）")) return;
+      try {
+        await setDoc(doc(db, "users", authorId), { blocked: true }, { merge: true });
+        showToast("アカウントをブロックしました");
+      } catch { showToast("ブロックに失敗しました", "error"); }
+    });
+  });
+
+  // カテゴリ管理（名前変更・削除）
+  adminCategoriesEl.innerHTML = categories.length
+    ? categories.map(c => `
+      <div class="admin-cat-row">
+        <span class="admin-cat-name" style="color:${getCatColor(c.id).text}">${escHtml(c.label)}</span>
+        <button class="secondary-btn small-btn admin-cat-rename" data-id="${c.id}">名前変更</button>
+        <button class="secondary-btn small-btn danger admin-cat-delete" data-id="${c.id}">削除</button>
+      </div>`).join("")
+    : `<p class="admin-empty">カテゴリがありません</p>`;
+
+  adminCategoriesEl.querySelectorAll(".admin-cat-rename").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const cat = categories.find(c => c.id === btn.dataset.id);
+      if (!cat) return;
+      const input = prompt("新しいジャンル名（10文字以内）:", cat.label);
+      if (input === null) return;
+      const label = input.trim();
+      if (!label) { showToast("名前を入力してください", "error"); return; }
+      if (label.length > 10) { showToast("10文字以内にしてください", "error"); return; }
+      if (containsNgWord(label)) { showToast("不適切な語句が含まれています", "error"); return; }
+      const next = categories.map(c => c.id === cat.id ? { ...c, label } : c);
+      try { await setDoc(doc(db, "settings", "categories"), { list: next }); showToast("ジャンル名を変更しました ✅"); }
+      catch { showToast("変更に失敗しました", "error"); }
+    });
+  });
+  adminCategoriesEl.querySelectorAll(".admin-cat-delete").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const cat = categories.find(c => c.id === btn.dataset.id);
+      if (!cat) return;
+      if (!confirm(`ジャンル「${cat.label}」を削除しますか？`)) return;
+      const next = categories.filter(c => c.id !== cat.id);
+      try { await setDoc(doc(db, "settings", "categories"), { list: next }); showToast("ジャンルを削除しました"); }
+      catch { showToast("削除に失敗しました", "error"); }
+    });
+  });
+}
+
 // ── 編集モーダル ─────────────────────────────────────────────
+const editImagePreview    = document.getElementById("edit-image-preview");
+const editImagePreviewImg = document.getElementById("edit-image-preview-img");
+
+editPostImage.addEventListener("change", () => {
+  const file = editPostImage.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    editImagePreviewImg.src = e.target.result;
+    editImagePreview.classList.remove("hidden");
+  };
+  reader.readAsDataURL(file);
+});
+
 cancelEditBtn.addEventListener("click", () => editModal.classList.add("hidden"));
 editModal.addEventListener("click", (e) => {
   if (e.target === editModal) editModal.classList.add("hidden");
@@ -1032,6 +1430,9 @@ editForm.addEventListener("submit", async (e) => {
   const file = editPostImage.files[0];
   const post = allPosts.find(p => p.id === id);
   if (!post) return;
+
+  const ng = containsNgWord(editPostTitle.value) || containsNgWord(editPostContent.value);
+  if (ng) { showToast("不適切な語句が含まれているため更新できません", "error"); return; }
 
   let imageData = post.image;
   if (file) {
@@ -1086,6 +1487,7 @@ reportModal.addEventListener("click", (e) => { if (e.target === reportModal) clo
 reportForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   if (!currentUser) { showToast("ログインが必要です"); return; }
+  if (blockedGuard()) return;
   const postId = reportPostId.value;
   try {
     await addDoc(collection(db, "reports"), {
@@ -1098,14 +1500,67 @@ reportForm.addEventListener("submit", async (e) => {
       status:       "open",
       createdAt:    serverTimestamp()
     });
-    // 同じ投稿を繰り返し通報できないよう端末内に記録
+    // 通報された投稿は公開掲示板から外し、管理者ページへ移動する
+    await updateDoc(doc(db, "posts", postId), {
+      hidden:       true,
+      reportReason: reportReason.value,
+      reportDetail: reportDetail.value.trim() || null,
+      reportedAt:   serverTimestamp()
+    });
     const reported = getReportedPosts();
     reported.push(postId);
     localStorage.setItem(REPORTED_KEY, JSON.stringify(reported));
     closeReportModal();
-    showToast("通報を受け付けました。ご協力ありがとうございます 🙏");
+    showToast("通報を受け付けました。管理者が確認します 🙏");
   } catch {
     showToast("通報の送信に失敗しました", "error");
+  }
+});
+
+// ── 「試した！」モーダル ──────────────────────────────────────
+const triedModal     = document.getElementById("tried-modal");
+const triedForm      = document.getElementById("tried-form");
+const triedPostId    = document.getElementById("tried-post-id");
+const triedTarget    = document.getElementById("tried-target");
+const cancelTriedBtn = document.getElementById("cancel-tried-btn");
+let triedEffect = 1; // 1=効果あり, 0=イマイチ
+
+triedModal.querySelectorAll(".tried-effect-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    triedEffect = Number(btn.dataset.effect);
+    triedModal.querySelectorAll(".tried-effect-btn").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+  });
+});
+
+function openTriedModal(postId, title) {
+  triedPostId.value = postId;
+  triedTarget.textContent = `対象: 「${title || ""}」`;
+  triedEffect = 1;
+  triedModal.querySelectorAll(".tried-effect-btn").forEach(b => b.classList.toggle("active", Number(b.dataset.effect) === 1));
+  triedModal.classList.remove("hidden");
+}
+function closeTriedModal() { triedModal.classList.add("hidden"); }
+cancelTriedBtn.addEventListener("click", closeTriedModal);
+triedModal.addEventListener("click", (e) => { if (e.target === triedModal) closeTriedModal(); });
+
+triedForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!isRegistered()) { showToast("ログインが必要です"); return; }
+  if (blockedGuard()) return;
+  const id = triedPostId.value;
+  const post = allPosts.find(p => p.id === id);
+  if (!post) { closeTriedModal(); return; }
+  if (post.triedBy?.includes(currentUser.uid)) { closeTriedModal(); showToast("すでに報告済みです"); return; }
+  try {
+    await updateDoc(doc(db, "posts", id), {
+      triedBy:     arrayUnion(currentUser.uid),
+      effectiveBy: triedEffect ? arrayUnion(currentUser.uid) : arrayRemove(currentUser.uid)
+    });
+    closeTriedModal();
+    showToast("実践報告ありがとうございます！🙌");
+  } catch {
+    showToast("報告の送信に失敗しました", "error");
   }
 });
 
@@ -1126,6 +1581,65 @@ function escHtml(str) {
     .replace(/"/g, "&quot;");
 }
 
+// ── 初回プロフィール設定 ─────────────────────────────────────
+const setupModal      = document.getElementById("setup-modal");
+const setupForm       = document.getElementById("setup-form");
+const setupName       = document.getElementById("setup-name");
+const setupAvatarGrid = document.getElementById("setup-avatar-grid");
+let setupSelectedEmoji = "🙂";
+
+// 初回設定用のアイコングリッドを生成
+AVATAR_EMOJIS.forEach(emoji => {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "avatar-option";
+  btn.textContent = emoji;
+  btn.addEventListener("click", () => {
+    setupSelectedEmoji = emoji;
+    setupAvatarGrid.querySelectorAll(".avatar-option").forEach(b => b.classList.remove("selected"));
+    btn.classList.add("selected");
+  });
+  setupAvatarGrid.appendChild(btn);
+});
+
+function openSetupModal(currentName) {
+  setupName.value = currentName && !/^ユーザー/.test(currentName) ? currentName : "";
+  setupSelectedEmoji = currentAvatarEmoji || "🙂";
+  setupAvatarGrid.querySelectorAll(".avatar-option").forEach(b => {
+    b.classList.toggle("selected", b.textContent === setupSelectedEmoji);
+  });
+  setupModal.classList.remove("hidden");
+  setupName.focus();
+}
+
+setupForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!currentUser) return;
+  const name = setupName.value.trim();
+  if (!name) { showToast("表示名を入力してください", "error"); return; }
+  if (name.length > 20) { showToast("表示名は20文字以内にしてください", "error"); return; }
+  if (containsNgWord(name)) { showToast("不適切な語句が含まれています", "error"); return; }
+  try {
+    await setDoc(doc(db, "users", currentUser.uid), {
+      displayName: name,
+      avatarEmoji: setupSelectedEmoji,
+      setupDone: true,
+      updatedAt: serverTimestamp()
+    }, { merge: true });
+    await updateProfile(currentUser, { displayName: name });
+    currentAvatarEmoji = setupSelectedEmoji;
+    userGreeting.textContent = "👤 " + name;
+    const mypageAvatarEl = document.getElementById("mypage-avatar-display");
+    if (mypageAvatarEl) mypageAvatarEl.textContent = setupSelectedEmoji;
+    await syncAuthorInfoToPosts();
+    setupModal.classList.add("hidden");
+    updateMypageView();
+    showToast("プロフィールを設定しました ✅");
+  } catch {
+    showToast("設定の保存に失敗しました", "error");
+  }
+});
+
 // ── 折りたたみセクション（マイページ） ──────────────────────
 function initCollapsibles() {
   document.querySelectorAll(".collapsible-header").forEach(header => {
@@ -1144,5 +1658,5 @@ function initCollapsibles() {
 // ── 起動 ─────────────────────────────────────────────────────
 initCollapsibles();
 initWelcome();
-loadCategories();
+subscribeCategories();
 subscribePosts();

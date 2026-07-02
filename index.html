@@ -41,13 +41,13 @@
       </div>
 
       <div class="welcome-step">
-        <div class="welcome-step-icon">👍</div>
+        <div class="welcome-step-icon">🙌</div>
         <div>
-          <h3>役に立ったらいいね</h3>
-          <p>使えると思ったTipsにいいねを押して盛り上げよう。3いいね以上で★人気バッジがつきます。</p>
+          <h3>実際に試して報告しよう</h3>
+          <p>Tipsを試したら「🙌 試した！」を押して、効果があったか報告しよう。試した人が多いTipsほどUP。3人以上が試すと★人気バッジがつきます。</p>
           <div class="welcome-likes-demo">
-            <button class="welcome-like-btn liked">❤️ 12</button>
-            <span class="welcome-like-tip">← タップするといいねできる</span>
+            <button class="welcome-like-btn liked" style="background:rgba(52,168,83,0.15);border-color:#34a853;color:#1e7e40;">🙌 試した 12</button>
+            <span class="welcome-like-tip">← 試したらタップ</span>
           </div>
         </div>
       </div>
@@ -88,7 +88,7 @@
     <button id="welcome-start-btn" class="welcome-start-btn">
       はじめる →
     </button>
-    <p class="welcome-hint">アカウント登録で投稿をいつでも見返せます</p>
+    <p class="welcome-hint">「はじめる」で無料のアカウント登録・ログインへ。表示名やアイコンはマイページでいつでも変更できます。</p>
   </div>
 </div>
 
@@ -101,11 +101,13 @@
       <nav class="header-nav">
         <button id="nav-home-btn" class="nav-btn active">ホーム</button>
         <button id="nav-mypage-btn" class="nav-btn">マイページ</button>
+        <button id="nav-admin-btn" class="nav-btn admin-nav hidden">🛡 管理</button>
       </nav>
       <div class="auth-container">
         <div id="user-profile" class="hidden">
-          <button id="auth-btn" class="primary-btn small-btn login-btn">新規登録/ログイン</button>
-          <button id="logout-btn" class="secondary-btn small-btn hidden">ログアウト</button>
+          <span id="user-greeting" class="user-greeting hidden"></span>
+          <button id="auth-btn" class="primary-btn login-btn">新規登録 / ログイン</button>
+          <button id="logout-btn" class="secondary-btn logout-btn hidden">ログアウト</button>
         </div>
       </div>
     </div>
@@ -116,22 +118,29 @@
 
     <section class="post-form-section glass-panel">
       <div id="post-trigger-container" class="post-trigger-row">
-        <input type="text" placeholder="知恵をシェアする..." readonly id="post-trigger-input" />
+        <button type="button" id="post-trigger-btn" class="post-trigger-btn">
+          <span class="post-trigger-plus">＋</span> 知恵をシェアする
+        </button>
       </div>
       <form id="post-form" class="hidden">
-        <input type="text" id="post-title" placeholder="タイトル (必須: 例: 10分でできるシンク掃除)" required />
-        <textarea id="post-content" placeholder="裏ワザの詳細を教えてください！(必須)" rows="4" required></textarea>
+        <input type="text" id="post-title" placeholder="タイトル（例：10分でできるシンク掃除）" maxlength="60" required />
+        <textarea id="post-content" class="post-content-area" placeholder="裏ワザの詳細を教えてください" rows="8" maxlength="1000" required></textarea>
         <div style="margin-bottom: 1rem;">
-          <label style="font-size: 0.9rem; color: var(--text-muted); font-weight: 600;">画像 (任意):</label><br>
+          <label style="font-size: 0.9rem; color: var(--text-muted); font-weight: 600;">画像（任意）:</label><br>
           <input type="file" id="post-image" accept="image/*" class="file-input" />
+          <div id="post-image-preview" class="image-preview hidden">
+            <img id="post-image-preview-img" alt="プレビュー" />
+            <button type="button" id="post-image-clear" class="image-clear-btn" title="画像を取り消す">✕</button>
+          </div>
         </div>
         <div class="form-footer">
           <div class="category-group">
             <select id="post-category" required></select>
-            <button type="button" id="add-category-btn" class="secondary-btn small-btn">+ 追加</button>
+            <button type="button" id="add-category-btn" class="secondary-btn small-btn">＋ ジャンル追加</button>
           </div>
           <div class="form-actions">
-            <span id="draft-saved-msg" class="success-msg hidden" style="font-size:0.8rem; margin-top:10px;">下書き保存済み</span>
+            <span id="draft-saved-msg" class="success-msg hidden" style="font-size:0.8rem;">下書き保存しました</span>
+            <button type="button" id="open-drafts-btn" class="secondary-btn">下書き一覧</button>
             <button type="button" id="save-draft-btn" class="secondary-btn">下書き保存</button>
             <button type="button" id="cancel-post-btn" class="secondary-btn">キャンセル</button>
             <button type="submit" class="primary-btn">シェアする</button>
@@ -140,13 +149,20 @@
       </form>
     </section>
 
+    <section class="search-section glass-panel">
+      <div class="search-box">
+        <span class="search-icon">🔍</span>
+        <input type="search" id="search-input" placeholder="キーワードで検索（タイトル・本文）" />
+      </div>
+    </section>
+
     <section class="filters-section glass-panel">
       <div id="filters-container" class="filters"></div>
       <div class="sort-container">
         <label for="sort-select">並び替え:</label>
         <select id="sort-select">
-          <option value="latest">更新順 (新着)</option>
-          <option value="likes">評価数が多い順</option>
+          <option value="tried">🙌 試した順</option>
+          <option value="latest">新着順</option>
         </select>
       </div>
     </section>
@@ -170,14 +186,14 @@
                 </svg>
               </button>
             </h3>
-            <p class="mypage-avatar-hint">↑ アイコンをクリックして変更</p>
+            <p class="mypage-avatar-hint">← アイコンをクリックして変更</p>
           </div>
         </div>
       </div>
       <div id="mypage-stats" class="stats-container">
         <div class="stat-box">
-          <h3>獲得した総いいね数</h3>
-          <p id="total-likes" class="stat-number">0 ❤️</p>
+          <h3>自分の投稿が試された回数</h3>
+          <p id="total-likes" class="stat-number">0 🙌</p>
         </div>
       </div>
       <div class="collapsible-section">
@@ -215,12 +231,27 @@
           <p id="profile-view-post-count" class="stat-number">0 📝</p>
         </div>
         <div class="stat-box">
-          <h3>獲得いいね数</h3>
-          <p id="profile-view-likes" class="stat-number">0 ❤️</p>
+          <h3>試された回数</h3>
+          <p id="profile-view-likes" class="stat-number">0 🙌</p>
         </div>
       </div>
       <h3 class="mypost-title">投稿履歴</h3>
       <section id="user-posts-container" class="posts-list"></section>
+    </section>
+  </main>
+
+  <!-- ===== Admin View (管理者ページ) ===== -->
+  <main id="admin-view" class="hidden">
+    <section class="glass-panel mypage-section">
+      <h2>🛡 管理者ページ</h2>
+      <p class="auth-modal-desc">通報され掲示板から非表示になった投稿です。内容を確認して対応してください。</p>
+
+      <h3 class="mypost-title">🚩 通報された投稿（<span id="admin-reported-count">0</span>件）</h3>
+      <section id="admin-reported-container" class="posts-list"></section>
+
+      <h3 class="mypost-title" style="margin-top:1.75rem;">🗂 カテゴリ管理</h3>
+      <p class="auth-modal-desc">ジャンル名の変更・削除ができます。</p>
+      <div id="admin-categories" class="admin-categories"></div>
     </section>
   </main>
 
@@ -299,6 +330,9 @@
         <label style="font-size: 0.9rem; color: var(--text-muted); font-weight: 600;">画像を変更 (任意):</label><br>
         <input type="file" id="edit-post-image" accept="image/*" class="file-input" />
         <p style="font-size:0.8rem; color:var(--text-muted);">※新しい画像を選択しない場合は既存の画像が維持されます</p>
+        <div id="edit-image-preview" class="image-preview hidden">
+          <img id="edit-image-preview-img" alt="プレビュー" />
+        </div>
       </div>
       <div class="form-footer">
         <select id="edit-post-category" required></select>
@@ -306,6 +340,55 @@
           <button type="button" id="cancel-edit-btn" class="secondary-btn">キャンセル</button>
           <button type="submit" class="primary-btn">更新する</button>
         </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Drafts Modal (下書き一覧) -->
+<div id="drafts-modal" class="modal hidden">
+  <div class="modal-content glass-panel">
+    <h2>📝 下書き一覧</h2>
+    <p class="auth-modal-desc">保存した下書きをタップすると編集中の内容に読み込みます。</p>
+    <div id="drafts-list" class="drafts-list"></div>
+    <div style="text-align:right;margin-top:1rem;">
+      <button id="close-drafts-btn" class="secondary-btn">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<!-- Tried Modal (試した！＋効果報告) -->
+<div id="tried-modal" class="modal hidden">
+  <div class="modal-content glass-panel auth-modal-content">
+    <h2>🙌 試してみた！</h2>
+    <p id="tried-target" class="report-target"></p>
+    <form id="tried-form">
+      <input type="hidden" id="tried-post-id" />
+      <label class="setup-label">効果はありましたか？</label>
+      <div class="tried-effect-choices">
+        <button type="button" class="tried-effect-btn active" data-effect="1">効果あり 👍</button>
+        <button type="button" class="tried-effect-btn" data-effect="0">イマイチ 🤔</button>
+      </div>
+      <div class="form-actions auth-actions">
+        <button type="button" id="cancel-tried-btn" class="secondary-btn">キャンセル</button>
+        <button type="submit" class="primary-btn">報告する</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Profile Setup Modal (初回プロフィール設定) -->
+<div id="setup-modal" class="modal hidden">
+  <div class="modal-content glass-panel auth-modal-content">
+    <h2>👤 はじめまして！プロフィール設定</h2>
+    <p class="auth-modal-desc">表示名とアイコンを設定しましょう。あとからマイページでいつでも変更できます。</p>
+    <form id="setup-form">
+      <label class="setup-label">表示名</label>
+      <input type="text" id="setup-name" placeholder="例：節約マスター" maxlength="20" required />
+      <label class="setup-label">アイコンを選択</label>
+      <div id="setup-avatar-grid" class="avatar-grid"></div>
+      <div class="form-actions auth-actions">
+        <button type="submit" class="primary-btn">この内容ではじめる</button>
       </div>
     </form>
   </div>

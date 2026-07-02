@@ -4,48 +4,71 @@ rules_version = '2';
 //  Life Tips – Firestore セキュリティルール
 //  ・読み取りは誰でも可（公開コミュニティ）
 //  ・書き込みはログイン済みユーザーのみ
-//  ・投稿/コメントの削除は作成者本人のみ
+//  ・管理者(role=='admin')は通報投稿の管理・削除・ブロック・カテゴリ編集が可能
+//  ・ブロックされたアカウント(blocked==true)は投稿/コメント不可
+//  ※ 最初の管理者は Firebase コンソールで users/{uid}.role = "admin" を手動付与
 // ============================================================
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    function requesterData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+    function isAdmin() {
+      return request.auth != null && requesterData().role == 'admin';
+    }
+    function notBlocked() {
+      return request.auth != null && requesterData().get('blocked', false) != true;
+    }
 
     // 投稿
     match /posts/{postId} {
       allow read: if true;
       allow create: if request.auth != null
-                    && request.resource.data.authorId == request.auth.uid;
-      // いいね・コメント数の更新は任意のログインユーザーが可能
+                    && request.resource.data.authorId == request.auth.uid
+                    && notBlocked();
+      // いいね・コメント数・通報による非表示・管理者の復元など
       allow update: if request.auth != null;
       allow delete: if request.auth != null
-                    && resource.data.authorId == request.auth.uid;
+                    && (resource.data.authorId == request.auth.uid || isAdmin());
 
       // コメント（サブコレクション）
       match /comments/{commentId} {
         allow read: if true;
         allow create: if request.auth != null
-                      && request.resource.data.authorId == request.auth.uid;
+                      && request.resource.data.authorId == request.auth.uid
+                      && notBlocked();
         allow delete: if request.auth != null
-                      && resource.data.authorId == request.auth.uid;
+                      && (resource.data.authorId == request.auth.uid || isAdmin());
       }
     }
 
-    // ユーザープロフィール（表示名・アバター・ブックマーク）
+    // ユーザープロフィール（表示名・アバター・ブックマーク・role・blocked）
     match /users/{userId} {
       allow read: if true;
-      allow write: if request.auth != null && request.auth.uid == userId;
+      // 新規作成時は role/blocked を勝手に設定できない
+      allow create: if request.auth != null && request.auth.uid == userId
+                    && request.resource.data.get('role', 'user') == 'user'
+                    && request.resource.data.get('blocked', false) == false;
+      // 本人は自分の role/blocked を変更不可（権限昇格・自己ブロック解除の防止）。管理者は変更可
+      allow update: if isAdmin()
+                    || (request.auth != null && request.auth.uid == userId
+                        && request.resource.data.get('role', 'user') == resource.data.get('role', 'user')
+                        && request.resource.data.get('blocked', false) == resource.data.get('blocked', false));
+      allow delete: if isAdmin();
     }
 
-    // カテゴリ設定（共有）
+    // カテゴリ設定（共有）。ブロックされていないログインユーザーが編集可
     match /settings/{docId} {
       allow read: if true;
-      allow write: if request.auth != null;
+      allow write: if request.auth != null && notBlocked();
     }
 
-    // 通報（一般ユーザーは作成のみ可。閲覧・変更・削除は管理者がコンソールで行う）
+    // 通報（一般ユーザーは作成のみ。閲覧・更新・削除は管理者のみ）
     match /reports/{reportId} {
       allow create: if request.auth != null
                     && request.resource.data.reportedBy == request.auth.uid;
-      allow read, update, delete: if false;
+      allow read, update, delete: if isAdmin();
     }
   }
 }
